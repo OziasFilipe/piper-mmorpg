@@ -1,6 +1,7 @@
 'use strict';
 // As Aventuras do Piper — servidor MMORPG 2D (Node.js + WebSocket)
-const http = require('http'), fs = require('fs'), path = require('path'), crypto = require('crypto');
+const http = require('http'), fs = require('fs'), path = require('path'), crypto = require('crypto'), zlib = require('zlib');
+const BOOT = Date.now();
 const { WebSocketServer } = require('ws');
 const D = require('./public/defs.js');
 const { T, BLOCK, VOC, ITEMS, SPELLS, MON, ZONES, TASKS, NPCS, SHOPS, STATS, xpFor } = D;
@@ -123,11 +124,25 @@ const players = new Map(); // id -> player
 const cheb = (a, b) => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
 const DX = [0, -1, 0, 1], DY = [1, 0, -1, 0]; // 0 baixo,1 esquerda,2 cima,3 direita
 
+// Grade espacial: cada célula de 16x16 tiles guarda as entidades dentro dela.
+// Assim o servidor só olha o que está perto de cada jogador (bem mais leve).
+const CELL = 16, cells = new Map();
+const cellKey = (x, y) => ((y / CELL) | 0) * 100000 + ((x / CELL) | 0);
+function cellAdd(e) { const k = cellKey(e.x, e.y); let c = cells.get(k); if (!c) { c = new Set(); cells.set(k, c); } c.add(e); e._cell = k; }
+function cellDel(e) { if (e._cell == null) return; const c = cells.get(e._cell); if (c) { c.delete(e); if (!c.size) cells.delete(e._cell); } e._cell = null; }
+function near(x, y, rx, ry, fn) {
+  const cx0 = ((x - rx) / CELL) | 0, cx1 = ((x + rx) / CELL) | 0, cy0 = (Math.max(0, y - ry) / CELL) | 0, cy1 = ((y + ry) / CELL) | 0;
+  for (let cy = cy0; cy <= cy1; cy++) for (let cx = Math.max(0, cx0); cx <= cx1; cx++) {
+    const c = cells.get(cy * 100000 + cx); if (!c) continue;
+    for (const e of c) if (Math.abs(e.x - x) <= rx && Math.abs(e.y - y) <= ry) fn(e);
+  }
+}
 function place(e, x, y) {
   if (e.x != null && occ.get(e.y * TW + e.x) === e) occ.delete(e.y * TW + e.x);
   e.x = x; e.y = y; occ.set(y * TW + x, e);
+  const k = cellKey(x, y); if (e._cell !== k) { cellDel(e); cellAdd(e); }
 }
-function unplace(e) { if (occ.get(e.y * TW + e.x) === e) occ.delete(e.y * TW + e.x); }
+function unplace(e) { if (occ.get(e.y * TW + e.x) === e) occ.delete(e.y * TW + e.x); cellDel(e); }
 function walkable(x, y, forMon) {
   if (BLOCK[get(x, y)]) return false;
   if (forMon && isTown(x, y)) return false;
@@ -397,26 +412,23 @@ function playerTick(p, now) {
   let t = p.target ? ents.get(p.target) : null;
   if (p.target && (!t || t.dead || (t.kind === 'p' && !canHit(p, t)) || cheb(p, t) > 12)) { p.target = null; t = null; }
   const range = VOC[p.voc].range;
+  // alvo automático só enquanto o monstro está ENCOSTADO; se ele se afastar, o alvo some
+  if (t && p.autoTarget && cheb(p, t) > 1) { p.target = null; p.autoTarget = false; t = null; }
   if (!t && !isTown(p.x, p.y)) {
     for (const [dx, dy] of [[0, 1], [-1, 0], [0, -1], [1, 0], [1, 1], [-1, 1], [1, -1], [-1, -1]]) {
       const e = occ.get((p.y + dy) * TW + p.x + dx);
-      if (e && e.kind === 'm' && !MON[e.type].passive) { p.target = e.id; t = e; break; }
+      if (e && e.kind === 'm' && !MON[e.type].passive) { p.target = e.id; p.autoTarget = true; t = e; break; }
     }
   }
+  // segurança: se o celular parar de mandar "andar", o personagem para sozinho
+  if (p.walkDir >= 0 && now - (p.walkAt || 0) > 900) p.walkDir = -1;
   if (now >= p.nextMove) {
     if (p.walkDir >= 0) {
       p.path = null;
       if (tryMove(p, p.walkDir)) p.nextMove = now + stepTime(p);
-      else { p.dir = p.walkDir; const e = occ.get((p.y + DY[p.walkDir]) * TW + p.x + DX[p.walkDir]); if (e && e.kind === 'm' && !isTown(p.x, p.y)) { p.target = e.id; t = e; } }
+      else { p.dir = p.walkDir; const e = occ.get((p.y + DY[p.walkDir]) * TW + p.x + DX[p.walkDir]); if (e && e.kind === 'm' && !isTown(p.x, p.y)) { p.target = e.id; p.autoTarget = true; t = e; } }
     }
-    else if (p.goto) {
-      if (p.x === p.goto.x && p.y === p.goto.y) p.goto = null;
-      else { const d = bfsStep(p, p.goto.x, p.goto.y, 3000, p.goto.adj); if (d >= 0 && tryMove(p, d)) p.nextMove = now + stepTime(p); else p.goto = null; }
-    }
-    else if (t && cheb(p, t) > range) {
-      const d = bfsStep(p, t.x, t.y, 1500, true);
-      if (d >= 0 && tryMove(p, d)) p.nextMove = now + stepTime(p);
-    }
+    // o personagem NUNCA anda sozinho: sem perseguição automática nem caminho automático
   }
   if (t && now >= p.nextAtk && cheb(p, t) <= range && canHit(p, t)) {
     p.dir = Math.abs(t.x - p.x) > Math.abs(t.y - p.y) ? (t.x > p.x ? 3 : 1) : (t.y > p.y ? 0 : 2);
@@ -437,7 +449,7 @@ function castSpell(p, id) {
   let t = p.target ? ents.get(p.target) : null;
   if ((sp.type === 'melee' || sp.type === 'target') && (!t || !canHit(p, t))) {
     let bd = 99; t = null;
-    for (const e of ents.values()) if (e.kind === 'm' && !MON[e.type].passive) { const d = cheb(p, e); if (d <= (sp.range || 1) && d < bd) { bd = d; t = e; } }
+    near(p.x, p.y, 8, 8, e => { if (e.kind === 'm' && !MON[e.type].passive) { const d = cheb(p, e); if (d <= (sp.range || 1) && d < bd) { bd = d; t = e; } } });
     if (t) p.target = t.id;
   }
   if (sp.type === 'melee' || sp.type === 'target') {
@@ -485,11 +497,11 @@ function useItem(p, slot) {
     p.hp = Math.min(p.hp, maxHp(p)); p.mp = Math.min(p.mp, maxMp(p)); p.dirty = true;
   }
 }
-function nearNpc(p, kind) { for (const e of ents.values()) if (e.kind === 'n' && cheb(p, e) <= 3 && (!kind || e.npc.shop === kind || e.npc.id === kind)) return e; return null; }
+function nearNpc(p, kind) { let f = null; near(p.x, p.y, 3, 3, e => { if (!f && e.kind === 'n' && (!kind || e.npc.shop === kind || e.npc.id === kind)) f = e; }); return f; }
 
 function talkNpc(p, e) {
   const n = e.npc;
-  if (cheb(p, e) > 3) { p.goto = { x: e.x, y: e.y, adj: true }; p.pendingNpc = e.id; return; }
+  if (cheb(p, e) > 3) return msg(p, `Chegue mais perto de ${n.name} para conversar.`, '#f2c14e');
   if (n.shop) {
     send(p, { t: 'shop', npc: n.id, name: n.name, greet: n.greet, items: SHOPS[n.shop] });
   } else if (n.quest) {
@@ -516,7 +528,7 @@ function talkNpc(p, e) {
 // ------------------------------------------------------------------ REDE
 function sendRegion(p, first) {
   const r = regionOf(p.x);
-  p.region = r;
+  p.region = r; p.known = new Map();   // cliente limpa as entidades ao trocar de região
   send(p, { t: first ? 'welcome' : 'region', id: p.id, r, ox: r * W, W, H, tiles: regionTiles[r], xpRate: XP_RATE });
 }
 function travel(p, to) {
@@ -533,21 +545,37 @@ function travel(p, to) {
   msg(p, `Você chegou em ${reg.town} — ${reg.name}.`, '#ffd84a');
 }
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'application/javascript; charset=utf-8', '.css': 'text/css', '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json', '.jpg': 'image/jpeg', '.webmanifest': 'application/manifest+json', '.ttf': 'font/ttf', '.svg': 'image/svg+xml' };
+// Arquivos do jogo ficam em memória, comprimidos (gzip) e com ETag:
+// o celular só baixa de novo o que mudou (resposta 304 = quase instantânea).
+const PUBLIC = path.join(__dirname, 'public'), fileCache = new Map();
+const GZ = new Set(['.html', '.js', '.css', '.json', '.webmanifest', '.svg', '.ttf']);
+function loadFile(f) {
+  const st = fs.statSync(f); if (!st.isFile()) throw new Error('not file');
+  let c = fileCache.get(f); if (c && c.mtime === st.mtimeMs && c.size === st.size) return c;   // arquivo mudou? relê
+  const data = fs.readFileSync(f), ext = path.extname(f);
+  c = { mtime: st.mtimeMs, size: st.size, data, gz: GZ.has(ext) ? zlib.gzipSync(data, { level: 9 }) : null, etag: '"' + crypto.createHash('sha1').update(data).digest('base64').slice(0, 20) + '"', type: MIME[ext] || 'application/octet-stream' };
+  fileCache.set(f, c); return c;
+}
 const server = http.createServer((req, res) => {
-  let u = decodeURIComponent(req.url.split('?')[0]); if (u === '/') u = '/index.html';
-  if (u === '/health') { res.writeHead(200); return res.end('ok'); }
-  const f = path.join(__dirname, 'public', path.normalize(u).replace(/^(\.\.[\/\\])+/, ''));
-  if (!f.startsWith(path.join(__dirname, 'public'))) { res.writeHead(403); return res.end(); }
-  fs.readFile(f, (err, data) => {
-    if (err) { res.writeHead(404); return res.end('404'); }
-    res.writeHead(200, { 'Content-Type': MIME[path.extname(f)] || 'application/octet-stream', 'Cache-Control': 'no-cache, max-age=0, must-revalidate' }); res.end(data);
-  });
+  try {
+    let u = decodeURIComponent(req.url.split('?')[0]); if (u === '/') u = '/index.html';
+    if (u === '/health') { res.writeHead(200, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' }); return res.end('ok ' + players.size); }
+    const f = path.join(PUBLIC, path.normalize(u).replace(/^(\.\.[\/\\])+/, ''));
+    if (!f.startsWith(PUBLIC)) { res.writeHead(403); return res.end(); }
+    let c; try { c = loadFile(f); } catch (e) { res.writeHead(404); return res.end('404'); }
+    const headers = { 'Content-Type': c.type, ETag: c.etag, 'Cache-Control': u.startsWith('/assets/') ? 'public, max-age=3600' : 'no-cache', Vary: 'Accept-Encoding' };
+    if (req.headers['if-none-match'] === c.etag) { res.writeHead(304, headers); return res.end(); }
+    if (c.gz && /\bgzip\b/.test(req.headers['accept-encoding'] || '')) { headers['Content-Encoding'] = 'gzip'; res.writeHead(200, headers); return res.end(c.gz); }
+    res.writeHead(200, headers); res.end(c.data);
+  } catch (e) { console.error('http', e); try { res.writeHead(500); res.end(); } catch (_) { } }
 });
-const wss = new WebSocketServer({ server });
+const wss = new WebSocketServer({ server, perMessageDeflate: false, maxPayload: 16 * 1024 });
 
 wss.on('connection', ws => {
   let p = null;
-  ws.on('message', raw => {
+  ws.isAlive = true; ws.on('pong', () => { ws.isAlive = true; });
+  ws.on('message', raw => { try { onMessage(raw); } catch (e) { console.error('msg', e); } });
+  function onMessage(raw) {
     let m; try { m = JSON.parse(raw); } catch (e) { return; }
     if (!p) {
       if (m.t !== 'login') return;
@@ -576,20 +604,20 @@ wss.on('connection', ws => {
       return;
     }
     switch (m.t) {
-      case 'walk': p.walkDir = [0, 1, 2, 3].includes(m.d) ? m.d : -1; if (p.walkDir >= 0) { p.goto = null; } break;
-      case 'goto': if (Number.isInteger(m.x) && Number.isInteger(m.y) && Math.abs(m.x - p.x) < 20 && Math.abs(m.y - p.y) < 20) p.goto = { x: m.x, y: m.y }; break;
+      case 'walk': p.walkDir = [0, 1, 2, 3].includes(m.d) ? m.d : -1; p.walkAt = Date.now(); break;
+      case 'goto': break; // removido: o personagem só anda pelo controle do jogador
       case 'target': {
         const e = ents.get(m.id);
         if (!e || e === p) { p.target = null; break; }
         if (e.kind === 'n') { talkNpc(p, e); break; }
         if (e.kind === 'p' && !canHit(p, e)) { msg(p, isTown(p.x, p.y) || isTown(e.x, e.y) ? 'Não é permitido atacar na cidade.' : 'PvP só é permitido entre jogadores de nível 8+.', '#f88'); break; }
         if (isTown(p.x, p.y)) { msg(p, 'Você está em zona protegida.', '#f88'); }
-        p.target = p.target === e.id ? null : e.id; p.goto = null; break;
+        p.target = p.target === e.id ? null : e.id; p.autoTarget = false; break;
       }
       case 'nearest': {
         let best = null, bd = 99;
-        for (const e of ents.values()) if (e.kind === 'm' && !MON[e.type].passive) { const d = cheb(p, e); if (d < bd && d <= 8) { bd = d; best = e; } }
-        if (best) p.target = best.id; break;
+        near(p.x, p.y, 8, 8, e => { if (e.kind === 'm' && !MON[e.type].passive) { const d = cheb(p, e); if (d < bd) { bd = d; best = e; } } });
+        if (best) { p.target = best.id; p.autoTarget = false; } break;
       }
       case 'spell': castSpell(p, String(m.s)); break;
       case 'travel': travel(p, m.to | 0); break;
@@ -622,9 +650,12 @@ wss.on('connection', ws => {
         break;
       }
     }
-  });
+  }
   ws.on('close', () => { if (p) leave(p); });
+  ws.on('error', () => { });
 });
+// derruba conexões mortas (celular que perdeu sinal) para não deixar "fantasmas"
+setInterval(() => { for (const ws of wss.clients) { if (!ws.isAlive) { ws.terminate(); continue; } ws.isAlive = false; try { ws.ping(); } catch (e) { } } }, 25000);
 function leave(p) {
   if (!players.has(p.id)) return;
   persist(p); saveDb();
@@ -633,39 +664,44 @@ function leave(p) {
 }
 
 // ------------------------------------------------------------------ LOOP
-setInterval(() => {
+// Só processa o que está perto de algum jogador. Sem jogadores, o servidor quase não gasta CPU.
+let lastSpawnCheck = 0;
+function tick() {
   const now = Date.now();
-  for (const s of spawns) if (!s.ent && now >= s.at) spawnMon(s);
-  for (const e of ents.values()) {
-    if (e.kind !== 'm') continue;
-    let near = false; for (const p of players.values()) if (cheb(e, p) < 18) { near = true; break; }
-    if (near) monTick(e, now); else if (e.target) e.target = null;
-  }
+  if (now - lastSpawnCheck > 1000) { lastSpawnCheck = now; for (const s of spawns) if (!s.ent && now >= s.at) spawnMon(s); }
+  if (!players.size) return;
+  const awake = new Set();
+  for (const p of players.values()) near(p.x, p.y, 18, 18, e => { if (e.kind === 'm') awake.add(e); });
+  for (const e of awake) if (!e.dead) monTick(e, now);
+  for (const p of players.values()) playerTick(p, now);
+  // enviar estado (só entidades na tela de cada jogador)
   for (const p of players.values()) {
-    playerTick(p, now);
-    if (p.pendingNpc && !p.goto) { const e = ents.get(p.pendingNpc); p.pendingNpc = null; if (e && cheb(p, e) <= 3) talkNpc(p, e); }
-  }
-  // enviar estado
-  for (const p of players.values()) {
-    const list = [];
-    for (const e of ents.values()) {
-      if (Math.abs(e.x - p.x) > 12 || Math.abs(e.y - p.y) > 9) continue;
+    // Nome e aparência só vão quando a criatura aparece ou muda (economiza internet do celular)
+    const list = [], known = p.known || (p.known = new Map()), seen = new Set();
+    near(p.x, p.y, 12, 9, e => {
       const hpPct = e.kind === 'n' ? 100 : Math.max(0, Math.round(100 * e.hp / (e.kind === 'p' ? maxHp(e) : e.mhp)));
       let look = e.look;
       if (e.kind === 'p') look = ['c', e.voc, e.eq.armor || '', e.eq.helmet || '', e.eq.weapon || '', e.eq.shield || '', e.app.skin, e.app.hs, e.app.hc, ''].join('|');
       const attackMs = Math.max(0, (e.attackUntil || 0) - now);
-      list.push([e.id, e.kind, e.x, e.y, e.dir, look, e.name, hpPct, e.kind === 'p' ? (e.skull > now ? 1 : 0) | (e.berserk > now ? 2 : 0) : 0, e.kind === 'p' ? e.level : 0, attackMs]);
-    }
+      seen.add(e.id);
+      const sig = look + '\n' + e.name, fresh = known.get(e.id) !== sig;
+      if (fresh) known.set(e.id, sig);
+      list.push([e.id, e.kind, e.x, e.y, e.dir, fresh ? look : 0, fresh ? e.name : 0, hpPct, e.kind === 'p' ? (e.skull > now ? 1 : 0) | (e.berserk > now ? 2 : 0) : 0, e.kind === 'p' ? e.level : 0, attackMs]);
+    });
+    for (const id of known.keys()) if (!seen.has(id)) known.delete(id);
     const cds = {}; for (const k in p.cds) if (p.cds[k] > now) cds[k] = p.cds[k] - now;
     const me = { x: p.x, y: p.y, hp: p.hp, mhp: maxHp(p), mp: p.mp, mmp: maxMp(p), lv: p.level, xp: p.xp, xpa: xpFor(p.level), xpb: xpFor(p.level + 1), gold: p.gold, tg: p.target, cds, voc: p.voc, town: isTown(p.x, p.y), r: regionOf(p.x), berserk: Math.max(0, p.berserk - now) };
     if (p.dirty) { Object.assign(me, { inv: p.inv, eq: p.eq, st: p.stats, pts: p.points, atk: Math.round(playerAtk(p)), def: Math.round(playerDef(p)), task: p.task, name: p.name }); p.dirty = false; }
     send(p, { t: 's', me, e: list, fx: p.fx });
     p.fx = [];
   }
-}, TICK);
+}
+setInterval(() => { try { tick(); } catch (e) { console.error('tick', e); } }, TICK);
+process.on('uncaughtException', e => console.error('erro não tratado (servidor continua):', e));
+process.on('unhandledRejection', e => console.error('promessa rejeitada:', e));
 
 setInterval(() => { for (const p of players.values()) persist(p); saveDb(); }, 30000);
 function shutdown() { for (const p of players.values()) persist(p); saveDb(); process.exit(0); }
 process.on('SIGINT', shutdown); process.on('SIGTERM', shutdown);
 
-server.listen(PORT, '0.0.0.0', () => console.log(`As Aventuras do Piper rodando em http://localhost:${PORT}`));
+server.listen(PORT, '0.0.0.0', () => console.log(`As Aventuras do Piper rodando em http://localhost:${PORT} (pronto em ${Date.now() - BOOT} ms)`));

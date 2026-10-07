@@ -1,7 +1,7 @@
 {
   "name": "aventuras-do-piper",
   "version": "1.0.0",
-  "description": "As Aventuras do Piper — MMORPG 2D online (Epiper Tecnologia)",
+  "description": "As Aventuras do Piper \u2014 MMORPG 2D online (Epiper Tecnologia)",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -14,6 +14,6 @@
     "ws": "^8.22.0"
   },
   "engines": {
-    "node": ">=18"
+    "node": "20.x"
   }
 }

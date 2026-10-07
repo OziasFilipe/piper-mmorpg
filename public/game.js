@@ -8,7 +8,7 @@
   let me = {}, inv = [], eq = {}, stats = {}, task = null, myLook = '';
   const ents = new Map(); let fxs = []; const speech = new Map();
   let miniImg = null, shopData = null, shopTab = 'buy', selSpell = 0, selItem = null;
-  let K = 1, UI = 1, LWW = 0, LHH = 0; // escala mundo->dispositivo, fator de texto, tamanho lógico da tela
+  let K = 1, UI = 1, LWW = 0, LHH = 0, mobileMode = false; // escala mundo->dispositivo, fator de texto, tamanho lógico da tela
   const LS = { get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (e) { } } };
 
   // ======================================================== ABERTURA
@@ -16,11 +16,13 @@
   let loaded = false, titleShown = false;
   // Personagens e cenário carregam juntos: nada do mapa aparece com arte
   // temporária, mas o renderer ainda possui fallback para conexões instáveis.
+  // Só o essencial segura a tela de título; os inimigos carregam em segundo plano.
+  // .catch: se algum arquivo falhar (internet ruim), o jogo continua com a arte reserva
   Promise.all([
-    CHARS.load(p => $('loadbar').firstElementChild.style.width = Math.round(p * 55) + '%'),
-    WORLD.load(p => $('loadbar').firstElementChild.style.width = (55 + Math.round(p * 20)) + '%'),
-    ENEMIES.load(p => $('loadbar').firstElementChild.style.width = (75 + Math.round(p * 25)) + '%')
-  ]).then(() => { loaded = true; onLoaded(); });
+    CHARS.load(p => $('loadbar').firstElementChild.style.width = Math.round(p * 75) + '%').catch(e => console.warn('chars', e)),
+    WORLD.load(p => $('loadbar').firstElementChild.style.width = (75 + Math.round(p * 25)) + '%').catch(e => console.warn('world', e))
+  ]).then(() => { loaded = true; onLoaded(); ENEMIES.load(); });
+  fetch('health', { cache: 'no-store' }).catch(() => { });   // já acorda o servidor enquanto a abertura passa
   const timers = [];
   timers.push(setTimeout(() => $('sA').classList.add('on'), 300));
   timers.push(setTimeout(() => $('sA').classList.remove('on'), 2700));
@@ -95,21 +97,38 @@
   $('loginBtn').onclick = () => connect(false);
   $('createBtn').onclick = () => connect(true);
   $('lpass').onkeydown = e => { if (e.key === 'Enter') connect(false); };
-  let connecting = false, errEl = null;
-  function connect(create) {
-    if (connecting) return; connecting = true;
+  let connecting = false, errEl = null, connTimer = null;
+  // Conexão robusta: primeiro "acorda" o servidor (no plano grátis do Render ele dorme
+  // e leva até ~1 min para voltar), depois abre o WebSocket com tempo-limite e novas tentativas.
+  async function wakeServer(onWait) {
+    const t0 = Date.now();
+    for (let i = 0; Date.now() - t0 < 90000; i++) {
+      try { const r = await fetch('health?t=' + Date.now(), { cache: 'no-store' }); if (r.ok) return true; } catch (e) { }
+      onWait(Math.round((Date.now() - t0) / 1000));
+      await new Promise(r => setTimeout(r, 2000));
+    }
+    return false;
+  }
+  async function connect(create, attempt = 0) {
+    if (connecting && attempt === 0) return; connecting = true;
     errEl = create ? $('authErr2') : $('authErr'); errEl.textContent = 'Conectando...';
     const name = create ? $('cname').value : $('lname').value, pass = create ? $('cpass').value : $('lpass').value;
     LS.set('piper_name', name);
-    if (ws) try { ws.close(); } catch (e) { }
-    ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host);
-    ws.onopen = () => ws.send(JSON.stringify({ t: 'login', create, name, pass, voc, app }));
-    ws.onmessage = ev => onMsg(JSON.parse(ev.data));
-    ws.onerror = () => { };
-    ws.onclose = () => {
-      connecting = false;
+    const ok = await wakeServer(s => { errEl.textContent = `Acordando o servidor... ${s}s (pode levar até 1 minuto)`; });
+    if (!ok) { connecting = false; errEl.textContent = 'Servidor fora do ar. Tente novamente em instantes.'; return; }
+    errEl.textContent = 'Conectando...';
+    if (ws) try { ws.onclose = null; ws.close(); } catch (e) { }
+    const sock = ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host);
+    clearTimeout(connTimer);
+    connTimer = setTimeout(() => { if (sock.readyState !== 1 && !inGame) { sock.onclose = null; try { sock.close(); } catch (e) { }
+      if (attempt < 3) { errEl.textContent = 'Tentando de novo...'; connect(create, attempt + 1); } else { connecting = false; errEl.textContent = 'Não foi possível conectar. Verifique sua internet.'; } } }, 12000);
+    sock.onopen = () => { clearTimeout(connTimer); sock.send(JSON.stringify({ t: 'login', create, name, pass, voc, app })); };
+    sock.onmessage = ev => onMsg(JSON.parse(ev.data));
+    sock.onerror = () => { };
+    sock.onclose = () => {
+      clearTimeout(connTimer); connecting = false;
       if (inGame) { inGame = false; show('game', false); show('title', true); $('authErr').textContent = 'Conexão perdida. Entre novamente.'; setTab('login'); }
-      else if (errEl && errEl.textContent === 'Conectando...') errEl.textContent = 'Não foi possível conectar ao servidor.';
+      else if (errEl && /Conectando/.test(errEl.textContent)) errEl.textContent = 'Não foi possível conectar ao servidor.';
     };
   }
   const send = o => { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); };
@@ -152,13 +171,13 @@
         else { const p = rpos(e, now); e.fx = p.x; e.fy = p.y; e.t0 = now; e.walk++; }
         e.x = x; e.y = y;
       }
-      Object.assign(e, { dir, look, name, hp, flags, lv });
+      Object.assign(e, { dir, hp, flags, lv }); if (look) e.look = look; if (name) e.name = name;   // 0 = não mudou
       if (attackMs) e.attackUntil = now + attackMs;
       e.dur = moveDur(e);
       if (dir === 1) e.faceLeft = true; else if (dir === 3) e.faceLeft = false;
-      if (id === myId && look !== myLook) {
-        myLook = look; const pc = $('portrait'); const g = pc.getContext('2d'); g.clearRect(0, 0, 116, 116);
-        g.drawImage(CHARS.portrait(look, 116), 0, 0, 116, 116);
+      if (id === myId && e.look && e.look !== myLook) {
+        myLook = e.look; const pc = $('portrait'); const g = pc.getContext('2d'); g.clearRect(0, 0, pc.width, pc.height);
+        drawPortrait(g, e.look, pc.width);
       }
     }
     for (const id of ents.keys()) if (!seen.has(id)) ents.delete(id);
@@ -168,6 +187,19 @@
     }
     if (m.me.inv) renderPanels();
     updateHud();
+  }
+  // Retrato: acha onde o personagem está desenhado na folha e enquadra o rosto/busto
+  function drawPortrait(g, look, size) {
+    const spr = CHARS.sprite(look, 0, 0); if (!spr) return;
+    let x0 = spr.width, y0 = spr.height, x1 = 0, y1 = 0;
+    try {
+      const d = spr.getContext('2d').getImageData(0, 0, spr.width, spr.height).data;
+      for (let y = 0; y < spr.height; y++) for (let x = 0; x < spr.width; x++) if (d[(y * spr.width + x) * 4 + 3] > 40) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+    } catch (e) { }
+    if (x1 <= x0) { x0 = 0; y0 = 0; x1 = spr.width; y1 = spr.height; }
+    const side = Math.max(x1 - x0, (y1 - y0) * 0.62), cx = (x0 + x1) / 2;
+    g.imageSmoothingQuality = 'high';
+    g.drawImage(spr, cx - side / 2, y0 - side * 0.06, side, side, size * 0.06, size * 0.08, size * 0.88, size * 0.88);
   }
   function rpos(e, now) {
     const k = e.t0 ? Math.min(1, (now - e.t0) / e.dur) : 1;
@@ -193,10 +225,15 @@
 
   // ======================================================== RENDER
   const FXC = { fire: '#ff8a2a', ice: '#8ef0ff', arcane: '#d08aff', energy: '#fff35a' };
-  let cam = { ox: 0, oy: 0 };
+  // A câmera acompanha a posição interpolada em vez de pular a cada pacote.
+  // Teleportes continuam instantâneos, mas os passos ganham uma inércia leve.
+  let cam = { ox: 0, oy: 0, x: null, y: null, t: 0 };
   function resize() {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const w = innerWidth, h = innerHeight;
+    // Não usamos apenas a largura: um notebook estreito continua com controles
+    // de teclado e arte no tamanho padrão. O aumento é exclusivo de toque real.
+    mobileMode = matchMedia('(hover: none) and (pointer: coarse)').matches;
     cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
     const Z = Math.max(h / 11, w / 22);       // px CSS por tile
     K = Z * dpr / TS; UI = TS / Z;            // UI: px de mundo por px CSS
@@ -210,8 +247,16 @@
     const now = performance.now();
     const meE = ents.get(myId); if (!meE) return;
     const mp = rpos(meE, now);
-    const camX = mp.x + 0.5 - LWW / TS / 2, camY = mp.y + 0.2 - LHH / TS / 2;
-    const ox = Math.round(-camX * TS * K) / K, oy = Math.round(-camY * TS * K) / K; cam = { ox, oy };
+    const targetX = mp.x + 0.5 - LWW / TS / 2, targetY = mp.y + 0.2 - LHH / TS / 2;
+    const dt = Math.min(45, Math.max(1, now - (cam.t || now)));
+    if (cam.x == null || Math.hypot(targetX - cam.x, targetY - cam.y) > 5) { cam.x = targetX; cam.y = targetY; }
+    else {
+      const follow = 1 - Math.exp(-dt / 72);
+      cam.x += (targetX - cam.x) * follow; cam.y += (targetY - cam.y) * follow;
+    }
+    cam.t = now;
+    const camX = cam.x, camY = cam.y;
+    const ox = Math.round(-camX * TS * K) / K, oy = Math.round(-camY * TS * K) / K; cam.ox = ox; cam.oy = oy;
     ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = '#000'; ctx.fillRect(0, 0, cv.width, cv.height);
     ctx.setTransform(K, 0, 0, K, 0, 0); ctx.imageSmoothingEnabled = false;
     const x0 = Math.floor(camX) - 1, y0 = Math.floor(camY) - 1, x1 = x0 + Math.ceil(LWW / TS) + 2, y1 = y0 + Math.ceil(LHH / TS) + 3;
@@ -220,7 +265,7 @@
     // Marco visual do hub: a construção fica sob personagens e objetos para
     // preservar a leitura de profundidade do mapa.
     if (WORLD.hub && CX >= x0 - 7 && CX <= x1 + 7 && CY >= y0 - 7 && CY <= y1 + 7) {
-      ctx.drawImage(WORLD.hub, (CX - 2.85) * TS + ox, (CY - 4.05) * TS + oy, 182, 176);
+      ctx.drawImage(WORLD.hub, (CX - 3.2) * TS + ox, (CY - 4.12) * TS + oy, 208, 160);
     }
     for (const f of fxs) {
       const age = now - f.t0, sx = f.x * TS + ox, sy = f.y * TS + oy;
@@ -261,7 +306,7 @@
     ctx.textAlign = 'center';
     for (const e of ents.values()) {
       const p = rpos(e, now), sx = p.x * TS + ox + 16, isC = e.kind === 'p' || (typeof e.look === 'string' && e.look[0] === 'c');
-      const top = isC ? 24 : (e.look === 'dragon' || e.look === 'troll' || e.look === 'bear' ? 14 : 4);
+      const top = isC ? (mobileMode ? 34 : 24) : (e.look === 'dragon' || e.look === 'troll' || e.look === 'bear' ? (mobileMode ? 22 : 14) : (mobileMode ? 12 : 4));
       const sy = p.y * TS + oy - top;
       const pct = e.hp / 100, hc = pct > 0.6 ? '#3fd35a' : pct > 0.3 ? '#f2c14e' : '#ef4444';
       const nc = e.kind === 'n' ? '#9fd8ff' : e.kind === 'p' ? ((e.flags & 1) ? '#ff6b6b' : '#ffffff') : hc;
@@ -284,7 +329,8 @@
     const sx = p.x * TS + ox, sy = p.y * TS + oy;
     const attackLeft = Math.max(0, (e.attackUntil || 0) - now);
     let frame = 0;
-    if (attackLeft) frame = 2;
+    const attackPhase = attackLeft ? 1 - Math.min(1, attackLeft / 300) : 0;
+    if (attackLeft) frame = e.kind === 'm' ? (attackPhase < .42 ? 3 : 4) : (attackPhase < .28 ? 0 : 2);
     else if (p.moving) frame = e.kind === 'm' ? 1 + (Math.floor(now / 110 + e.id) % 2) : 1 + (e.walk % 2);
     else if (e.kind === 'm' && Math.floor(now / 440 + e.id) % 5 === 0) frame = 1;
     const attackStep = attackLeft ? Math.sin((1 - attackLeft / 300) * Math.PI) * (e.kind === 'p' ? 5.8 : 4.5) : 0;
@@ -294,26 +340,29 @@
       ? e.look
       : ['c', isPlayer && e.id === myId && me.voc === 'wizard' ? 'wizard' : 'warrior', '', '', '', '', '0', 'curto', 'castanho', ''].join('|');
     if (isPlayer || (typeof e.look === 'string' && e.look[0] === 'c')) {
-      ctx.fillStyle = 'rgba(0,0,0,.3)'; ctx.beginPath(); ctx.ellipse(sx + 16, sy + 28.5, 10, 3.6, 0, 0, 7); ctx.fill();
+      const scale = mobileMode ? 1.2 : 1;
+      const stepWave = p.moving ? Math.sin(now / 72 + e.id * 1.7) : 0;
+      const stride = p.moving ? stepWave * 1.35 : Math.sin(now / 420 + e.id) * .55;
+      const shadowW = p.moving ? 9 + Math.abs(stepWave) * 2.2 : 10;
+      ctx.fillStyle = 'rgba(0,0,0,.32)'; ctx.beginPath(); ctx.ellipse(sx + 16, sy + 28.7, shadowW * scale, (3.2 + Math.abs(stepWave) * .6) * scale, 0, 0, 7); ctx.fill();
       if (e.flags & 2) { ctx.fillStyle = 'rgba(255,80,20,.28)'; ctx.beginPath(); ctx.ellipse(sx + 16, sy + 22, 17, 12, 0, 0, 7); ctx.fill(); }
-      const hero = isPlayer && CHARS.sprite(characterLook, e.dir, frame);
-      const img = hero || CHARS.sprite(characterLook, e.dir, frame);
-      const breathe = p.moving ? 0 : Math.sin(now / 420 + e.id) * .55;
-      const sway = p.moving ? 0 : Math.sin(now / 650 + e.id * 1.7) * .35;
+      const img = CHARS.sprite(characterLook, e.dir, frame);
+      const sway = p.moving ? stepWave * .4 : Math.sin(now / 650 + e.id * 1.7) * .35;
       const hurt = (e.hitUntil || 0) > now;
       ctx.save(); ctx.translate(dir[0] * attackStep, dir[1] * attackStep * .45);
       ctx.imageSmoothingEnabled = false;
       if (hurt) ctx.globalAlpha = 0.6;
-      if (hero) ctx.drawImage(img, sx - 5 + sway, sy + TS - 63 + breathe, 42, 63 - breathe);
-      else ctx.drawImage(img, sx - 1 + sway, sy + TS - 50 + breathe, 34, 51 - breathe);
+      const charW = 42 * scale, charH = 63 * scale;
+      ctx.drawImage(img, sx + 16 - charW / 2 + sway, sy + TS - charH + stride, charW, charH - Math.max(0, stride * .22));
       ctx.restore(); ctx.imageSmoothingEnabled = false;
       return;
     }
     const enemySprite = e.kind === 'm' && ENEMIES.sprite(e.look, frame);
     const img = enemySprite || SPR.entity(e.kind, e.look, e.dir, frame, e.faceLeft);
     const elite = e.look === 'bear' || e.look === 'troll' || e.look === 'dragon';
-    const iw = enemySprite ? (e.look === 'dragon' ? 70 : elite ? 51 : 43) : img.width;
-    const ih = enemySprite ? (e.look === 'dragon' ? 70 : elite ? 51 : 43) : img.height;
+    const scale = mobileMode ? 1.15 : 1;
+    const iw = (enemySprite ? (e.look === 'dragon' ? 70 : elite ? 51 : 43) : img.width) * scale;
+    const ih = (enemySprite ? (e.look === 'dragon' ? 70 : elite ? 51 : 43) : img.height) * scale;
     const idleBob = enemySprite && !p.moving ? Math.sin(now / 300 + e.id) * .8 : 0;
     ctx.fillStyle = 'rgba(0,0,0,.28)'; ctx.beginPath(); ctx.ellipse(sx + 16, sy + 29, iw > 40 ? 16 : 10, 4, 0, 0, 7); ctx.fill();
     ctx.save(); ctx.translate(dir[0] * attackStep, dir[1] * attackStep * .45);
@@ -401,13 +450,18 @@
     setTimeout(() => { d.style.opacity = 0; setTimeout(() => d.remove(), 1000); }, 7000);
     const l = $('chatLog'), d2 = d.cloneNode(true); l.appendChild(d2); while (l.children.length > 200) l.removeChild(l.firstChild); l.scrollTop = l.scrollHeight;
   }
-  function bar(id, v, max, label) { const b = $(id); b.querySelector('i').style.width = Math.max(0, Math.min(100, 100 * v / max)) + '%'; const s = b.querySelector('span'); if (s) s.textContent = label; }
+  function bar(id, v, max, label) {
+    const b = $(id), w = Math.max(0, Math.min(100, 100 * v / max)) + '%';
+    b.querySelector('i').style.width = w; const gh = b.querySelector('.ghost'); if (gh) gh.style.width = w;   // a faixa clara "segue" o dano
+    const s = b.querySelector('span'); if (s && label !== undefined && s.textContent !== label) s.textContent = label;
+  }
   const spells = () => D.SPELLS[me.voc] || [];
   let spellsBuilt = '';
   function updateHud() {
     bar('hpB', me.hp, me.mhp, `${me.hp} / ${me.mhp}`);
     bar('mpB', me.mp, me.mmp, `${me.mp} / ${me.mmp}`);
     bar('xpB', me.xp - me.xpa, me.xpb - me.xpa);
+    $('hudTL').classList.toggle('low', me.hp / me.mhp < 0.25);
     $('plv').textContent = me.lv; $('gold').textContent = me.gold + ' ouro';
     if ($('mShop').style.display === 'flex') $('shopGold').textContent = me.gold + ' ouro';
     if (me.name) $('pname').textContent = me.name;
@@ -617,6 +671,7 @@
   // joystick
   const joy = $('joy'), knob = $('knob'); let joyId = null, joyDir = -1;
   function setWalk(d) { if (d !== joyDir) { joyDir = d; send({ t: 'walk', d }); } }
+  setInterval(() => { if (joyDir >= 0 && inGame) send({ t: 'walk', d: joyDir }); }, 300);
   joy.addEventListener('pointerdown', e => { e.preventDefault(); joyId = e.pointerId; joy.setPointerCapture(e.pointerId); joyMove(e); });
   joy.addEventListener('pointermove', e => { if (e.pointerId === joyId) joyMove(e); });
   const joyEnd = e => { if (e.pointerId !== joyId) return; joyId = null; knob.style.transform = ''; setWalk(-1); };
@@ -653,7 +708,7 @@
     const tx = Math.floor(wx / TS), ty = Math.floor(wy / TS);
     let hit = null; const now = performance.now();
     for (const en of ents.values()) { if (en.id === myId) continue; const p = rpos(en, now); if (Math.round(p.x) === tx && (Math.round(p.y) === ty || Math.round(p.y) === ty + 1)) { hit = en; if (Math.round(p.y) === ty) break; } }
-    if (hit) send({ t: 'target', id: hit.id }); else send({ t: 'goto', x: tx, y: ty });
+    if (hit) send({ t: 'target', id: hit.id });   // tocar no chão não move o personagem: só o joystick/teclado
   });
   cv.addEventListener('contextmenu', e => e.preventDefault());
 })();

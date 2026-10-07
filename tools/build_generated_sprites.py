@@ -68,13 +68,33 @@ def monster_sheets(source):
             # The generated boss's wing slightly crossed into the dragon cell.
             # Its source lives in the next tile, so remove only that far edge.
             sprite.paste((0, 0, 0, 0), (224, 0, 256, 256))
-        # Cada arquivo de monstro tem três poses: repouso, passo esquerdo e
-        # passo direito. A arte é preservada, enquanto a postura, inclinação e
-        # base mudam o suficiente para dar uma caminhada real no mapa.
-        sheet = Image.new('RGBA', (768, 256), (0, 0, 0, 0))
-        for frame, pose in enumerate(((1.0, 1.0, 0, 0, 0), (0.96, 1.03, -7, -1, 2.2), (1.04, 0.97, 7, 2, -2.2))):
+        # Cinco poses: repouso, dois passos, preparação e golpe. Isso dá ao
+        # renderer quadros próprios para caminhada e ataque, sem trocar de
+        # estilo entre os monstros.
+        sheet = Image.new('RGBA', (1280, 256), (0, 0, 0, 0))
+        poses = (
+            (1.0, 1.0, 0, 0, 0),
+            (0.96, 1.04, -7, -1, 2.4),
+            (1.04, 0.97, 7, 2, -2.4),
+            (0.91, 1.08, -5, 2, 3.8),
+            (1.12, 0.91, 12, -3, -5.5),
+        )
+        for frame, pose in enumerate(poses):
             sheet.alpha_composite(motion_pose(sprite, *pose), (frame * 256, 0))
         sheet.save(ENEMIES / f'{name}.png', optimize=True)
+
+
+def world_props(source):
+    """Recorta árvore, pedra e portal do atlas no mesmo traço dos sprites."""
+    atlas = Image.open(source).convert('RGBA')
+    world = ROOT / 'public' / 'assets' / 'world'
+    world.mkdir(parents=True, exist_ok=True)
+    tree = fit(crop_cell(atlas, 0, 0, 3, 1, gutter=12), 256, 256, padding=3)
+    rock = fit(crop_cell(atlas, 1, 0, 3, 1, gutter=12), 128, 128, padding=4)
+    gate = fit(crop_cell(atlas, 2, 0, 3, 1, gutter=12), 384, 288, padding=4)
+    tree.save(world / 'oak-sm.png', optimize=True)
+    rock.save(world / 'rock-sm.png', optimize=True)
+    gate.save(world / 'hub-sm.png', optimize=True)
 
 
 def motion_pose(sprite, scale_x, scale_y, shift_x, shift_y, angle):
@@ -98,6 +118,11 @@ def main():
     parser.add_argument('--warrior', type=Path, required=True)
     parser.add_argument('--mage', type=Path, required=True)
     parser.add_argument('--monsters', type=Path, required=True)
+    parser.add_argument('--guard', type=Path)
+    parser.add_argument('--blacksmith', type=Path)
+    parser.add_argument('--healer', type=Path)
+    parser.add_argument('--sage', type=Path)
+    parser.add_argument('--props', type=Path)
     args = parser.parse_args()
     CHARS.mkdir(parents=True, exist_ok=True)
     character_sheet(args.warrior, CHARS / 'hero-warrior.png')
@@ -109,6 +134,17 @@ def main():
     character_sheet(args.mage, CHARS / 'body_1.png')
     character_sheet(args.warrior, CHARS / 'body_2.png')
     monster_sheets(args.monsters)
+    npc_sheets = {
+        'body_npc_guard.png': args.guard,
+        'body_npc_blacksmith.png': args.blacksmith,
+        'body_npc_healer.png': args.healer,
+        'body_npc_sage.png': args.sage,
+    }
+    for filename, source in npc_sheets.items():
+        if source:
+            character_sheet(source, CHARS / filename)
+    if args.props:
+        world_props(args.props)
 
 
 if __name__ == '__main__':

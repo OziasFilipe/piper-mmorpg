@@ -1,1 +1,14 @@
-{"cell": [128, 192], "sheets": ["body_0", "body_1", "body_2", "hair_curto_preto", "hair_curto_castanho", "hair_curto_loiro", "hair_curto_ruivo", "hair_curto_branco", "hair_curto_azul", "hair_curto_rosa", "hair_longo_preto", "hairb_longo_preto", "hair_longo_castanho", "hairb_longo_castanho", "hair_longo_loiro", "hairb_longo_loiro", "hair_longo_ruivo", "hairb_longo_ruivo", "hair_longo_branco", "hairb_longo_branco", "hair_longo_azul", "hairb_longo_azul", "hair_longo_rosa", "hairb_longo_rosa", "hair_rabo_preto", "hair_rabo_castanho", "hair_rabo_loiro", "hair_rabo_ruivo", "hair_rabo_branco", "hair_rabo_azul", "hair_rabo_rosa", "beard_preto", "beard_castanho", "beard_loiro", "beard_ruivo", "beard_branco", "beard_azul", "beard_rosa", "armor_a_cloth", "robe_a_cloth", "armor_a_leather", "robe_a_leather", "armor_a_chain", "robe_a_chain", "armor_a_plate", "robe_a_plate", "armor_a_robe", "robe_a_robe", "armor_a_dragon", "robe_a_dragon", "armor_n_apron", "robe_n_green", "robe_n_white", "helm_h_leather", "helm_h_iron", "helm_h_steel", "hat_a_cloth", "hat_a_leather", "hat_a_chain", "hat_a_plate", "hat_a_robe", "hat_a_dragon", "hat_n_green", "hat_n_white", "wpn_w_dagger", "wpn_w_sword", "wpn_w_axe", "wpn_w_long", "wpn_w_hammer", "wpn_w_dragon", "wpn_m_wand", "wpn_m_staff", "wpn_m_ice", "wpn_m_fire", "wpn_m_arcane", "wpn_m_dragon", "wpn_spear", "wpn_npc_hammer", "wpn_sage_staff", "shd_s_wood", "shd_s_iron", "shd_s_tower", "shd_s_guard"]}
+{
+  "cell": [128, 192],
+  "sheets": [
+    "body_0", "body_1", "body_2", "body_npc_guard", "body_npc_blacksmith", "body_npc_healer", "body_npc_sage",
+    "hair_curto_preto", "hair_curto_castanho", "hair_curto_loiro", "hair_curto_ruivo", "hair_curto_branco", "hair_curto_azul", "hair_curto_rosa",
+    "hair_longo_preto", "hairb_longo_preto", "hair_longo_castanho", "hairb_longo_castanho", "hair_longo_loiro", "hairb_longo_loiro", "hair_longo_ruivo", "hairb_longo_ruivo", "hair_longo_branco", "hairb_longo_branco", "hair_longo_azul", "hairb_longo_azul", "hair_longo_rosa", "hairb_longo_rosa",
+    "hair_rabo_preto", "hair_rabo_castanho", "hair_rabo_loiro", "hair_rabo_ruivo", "hair_rabo_branco", "hair_rabo_azul", "hair_rabo_rosa",
+    "beard_preto", "beard_castanho", "beard_loiro", "beard_ruivo", "beard_branco", "beard_azul", "beard_rosa",
+    "armor_a_cloth", "robe_a_cloth", "armor_a_leather", "robe_a_leather", "armor_a_chain", "robe_a_chain", "armor_a_plate", "robe_a_plate", "armor_a_robe", "robe_a_robe", "armor_a_dragon", "robe_a_dragon", "armor_n_apron", "robe_n_green", "robe_n_white",
+    "helm_h_leather", "helm_h_iron", "helm_h_steel", "hat_a_cloth", "hat_a_leather", "hat_a_chain", "hat_a_plate", "hat_a_robe", "hat_a_dragon", "hat_n_green", "hat_n_white",
+    "wpn_w_dagger", "wpn_w_sword", "wpn_w_axe", "wpn_w_long", "wpn_w_hammer", "wpn_w_dragon", "wpn_m_wand", "wpn_m_staff", "wpn_m_ice", "wpn_m_fire", "wpn_m_arcane", "wpn_m_dragon", "wpn_spear", "wpn_npc_hammer", "wpn_sage_staff",
+    "shd_s_wood", "shd_s_iron", "shd_s_tower", "shd_s_guard"
+  ]
+}

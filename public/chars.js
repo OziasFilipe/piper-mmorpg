@@ -1,7 +1,7 @@
 // Personagens em camadas (paper doll) a partir das folhas PNG geradas — As Aventuras do Piper
 const CHARS = (function () {
   const D = DEFS, SHEETS = {}, cache = new Map();
-  const ASSET_REV = 'pixel-mobile-1';
+  const ASSET_REV = 'motion-pixel-3';
   let CW = 128, CH = 192, ready = false;
 
   async function load(onProgress) {
@@ -43,8 +43,15 @@ const CHARS = (function () {
     // Os corpos principais agora são folhas completas de alta qualidade.
     // Usar a folha inteira evita que cabelo, armadura e armas do sistema
     // antigo sejam desenhados por cima do novo personagem.
-    const voc = look.split('|')[1];
-    const direct = SHEETS['body_' + (voc === 'wizard' ? 1 : 0)];
+    const [, voc, armor, , weapon] = look.split('|');
+    // NPCs recebem corpos próprios — guarda, ferreiro, curandeiro e sábio —
+    // em vez de vestirem o mesmo guerreiro que o jogador controla.
+    let body = 'body_' + (voc === 'wizard' ? 1 : 0);
+    if (weapon === 'spear') body = 'body_npc_guard';
+    else if (armor === 'n_apron') body = 'body_npc_blacksmith';
+    else if (armor === 'n_green') body = 'body_npc_healer';
+    else if (armor === 'n_white' || voc === 'npc') body = 'body_npc_sage';
+    const direct = SHEETS[body];
     if (direct && direct.width === CW * 3 && direct.height === CH * 4) {
       g.drawImage(direct, frame * CW, dir * CH, CW, CH, 0, 0, CW, CH);
       if (ready) cache.set(key, c);
