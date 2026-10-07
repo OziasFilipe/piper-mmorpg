@@ -272,6 +272,16 @@ label.lb{display:block;font-size:12px;color:var(--dim);margin:8px 0 3px;text-tra
   #joy,#acts{display:none!important}
   #feed{bottom:20px}
 }
+
+/* ---- Botão INSTALAR JOGO (PWA) ---- */
+#installBtn{position:absolute;top:calc(10px + env(safe-area-inset-top));right:calc(12px + env(safe-area-inset-right));z-index:60;display:none;align-items:center;gap:8px;padding:8px 16px 8px 12px;font-size:14px;animation:instPulse 2.2s ease-in-out infinite}
+#installBtn svg{width:20px;height:20px;fill:none;stroke:#23190e;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
+@keyframes instPulse{0%,100%{box-shadow:0 3px 0 #4c3118,0 5px 10px rgba(0,0,0,.48),0 0 0 0 rgba(255,216,106,.55)}50%{box-shadow:0 3px 0 #4c3118,0 5px 10px rgba(0,0,0,.48),0 0 0 8px rgba(255,216,106,0)}}
+#installHelp{position:fixed;inset:0;z-index:95;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.6);padding:14px}
+#installHelp .box{max-width:440px;width:100%;background:linear-gradient(#1b1f45,#0e1130);border:2px solid #c9932f;border-radius:12px;padding:16px 18px;color:#f3e6c4;box-shadow:0 8px 30px #000a;text-align:center;font-size:14px;line-height:1.45}
+#installHelp h3{margin:0 0 8px;font-family:Lora,serif;color:#ffd86a;font-size:19px}
+#installHelp ol{text-align:left;margin:8px 0 12px;padding-left:22px}
+#installHelp b{color:#ffd86a}
 </style>
 </head>
 <body>
@@ -288,6 +298,7 @@ label.lb{display:block;font-size:12px;color:var(--dim);margin:8px 0 3px;text-tra
   <div class="bg"></div>
   <img class="logo" src="assets/ui/logo.png" alt="As Aventuras do Piper">
   <div id="tap">TOQUE PARA COMEÇAR</div>
+  <button id="installBtn" class="gold-btn"><svg viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 19h14"/></svg>INSTALAR JOGO</button>
   <div id="loadbar"><i></i></div>
   <div id="ver">v0.2 · Epiper Tecnologia</div>
   <div id="auth">
@@ -407,5 +418,32 @@ label.lb{display:block;font-size:12px;color:var(--dim);margin:8px 0 3px;text-tra
 <script src="sprites.js"></script>
 <script src="chars.js"></script>
 <script src="game.js"></script>
+<div id="installHelp"><div class="box"><h3>Instalar o jogo</h3><div id="installSteps"></div><button class="gold-btn" id="installOk">ENTENDI</button></div></div>
+<script>
+// Instalação no celular (PWA): botão "Instalar jogo" na tela de título
+(function () {
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(function () { });
+  var btn = document.getElementById('installBtn'), help = document.getElementById('installHelp'), steps = document.getElementById('installSteps');
+  var ua = navigator.userAgent, isIOS = /iPhone|iPad|iPod/i.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  var isMobile = isIOS || /Android|Mobi/i.test(ua) || (navigator.maxTouchPoints > 0 && Math.min(screen.width, screen.height) < 820);
+  var installed = function () { return matchMedia('(display-mode: standalone)').matches || matchMedia('(display-mode: fullscreen)').matches || navigator.standalone === true; };
+  var deferred = null;
+  function refresh() { btn.style.display = (!installed() && (deferred || isMobile)) ? 'flex' : 'none'; }
+  window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault(); deferred = e; refresh(); });
+  window.addEventListener('appinstalled', function () { deferred = null; btn.style.display = 'none'; });
+  btn.addEventListener('pointerdown', function (e) { e.stopPropagation(); });   // não abre o login ao tocar no botão
+  btn.addEventListener('click', function (e) {
+    e.stopPropagation();
+    if (deferred) { var d = deferred; deferred = null; d.prompt(); d.userChoice.then(function (r) { if (r.outcome !== 'accepted') deferred = d; refresh(); }).catch(refresh); return; }
+    steps.innerHTML = isIOS
+      ? '<ol><li>Toque no botão <b>Compartilhar</b> (quadrado com seta ⬆) do Safari.</li><li>Escolha <b>Adicionar à Tela de Início</b>.</li><li>Toque em <b>Adicionar</b>. O ícone do Piper aparece no seu celular.</li></ol>'
+      : '<ol><li>Toque no menu <b>⋮</b> do navegador (canto superior).</li><li>Escolha <b>Instalar app</b> ou <b>Adicionar à tela inicial</b>.</li><li>Confirme em <b>Instalar</b>. O ícone do Piper aparece no seu celular.</li></ol>';
+    help.style.display = 'flex';
+  });
+  help.addEventListener('pointerdown', function (e) { e.stopPropagation(); });
+  document.getElementById('installOk').addEventListener('click', function () { help.style.display = 'none'; });
+  refresh();
+})();
+</script>
 </body>
 </html>

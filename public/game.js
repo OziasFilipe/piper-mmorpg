@@ -1,4 +1,23 @@
 // Cliente — As Aventuras do Piper (mobile, paisagem, online)
+// Toque: o clique dispara ao soltar o dedo. Assim os botões funcionam mesmo com outro dedo
+// na tela (ex.: segurando o joystick), quando o navegador do celular cancela o "click" normal.
+(function () {
+  const down = new Map(); let synth = 0;
+  document.addEventListener('pointerdown', e => { if (e.pointerType !== 'mouse') down.set(e.pointerId, { t: e.target, x: e.clientX, y: e.clientY }); }, true);
+  document.addEventListener('pointercancel', e => down.delete(e.pointerId), true);
+  document.addEventListener('pointerup', e => {
+    const d = down.get(e.pointerId); down.delete(e.pointerId);
+    if (!d || e.pointerType === 'mouse' || !d.t.isConnected) return;
+    if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > 26) return;          // foi arrasto, não toque
+    const el = document.elementFromPoint(e.clientX, e.clientY) || e.target, t = d.t;
+    if (!(t === el || t.contains(el) || el.contains(t))) return;
+    if (t.closest('input,textarea,select,#joy,#view')) return;              // campos de texto e joystick seguem normais
+    synth = performance.now();
+    t.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+  }, true);
+  // descarta o click nativo que o navegador ainda mandaria (evita clique duplo)
+  document.addEventListener('click', e => { if (e.isTrusted && performance.now() - synth < 700) { e.stopPropagation(); e.preventDefault(); } }, true);
+})();
 (function () {
   const D = DEFS, T = D.T, TS = 32;
   const $ = id => document.getElementById(id);
