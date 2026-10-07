@@ -288,6 +288,8 @@ const SPR = (function () {
   // Todo o chão parado é desenhado uma vez em "pedaços" (8x8 tiles) e guardado;
   // a cada quadro só se desenha 1 preenchimento de água animada + ~12 pedaços.
   const GIMG = {};
+  // O mapa preserva as texturas modernas; os personagens e o HUD fazem a
+  // leitura clássica de RPG mobile sem transformar o mundo em baixa resolução.
   const GFILES = ['water-seamless.jpg', 'bridge-h.png', 'bridge-v.png', 'grass-seamless.jpg'];
   GFILES.forEach(n => { const im = new Image(); im.onload = () => { GIMG[n] = im; chunks.clear(); }; im.src = 'assets/world/' + n; });
   const gReady = () => GFILES.every(n => GIMG[n]) && typeof DOMMatrix !== 'undefined';

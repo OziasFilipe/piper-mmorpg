@@ -3,7 +3,7 @@
 const ENEMIES = (() => {
   const names = ['rabbit', 'rat', 'snake', 'wolf', 'goblin', 'bear', 'orc', 'shaman', 'troll', 'scorpion', 'mummy', 'skeleton', 'spider', 'dragon'];
   const images = {};
-  const ASSET_REV = 'ragnarok-3';
+  const ASSET_REV = 'pixel-mobile-1';
   function load(onProgress) {
     let done = 0;
     return Promise.all(names.map(name => new Promise(resolve => {

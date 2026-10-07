@@ -33,7 +33,9 @@ def fit(subject, width, height, padding=8):
     max_w, max_h = width - padding * 2, height - padding * 2
     scale = min(max_w / subject.width, max_h / subject.height)
     size = (max(1, round(subject.width * scale)), max(1, round(subject.height * scale)))
-    subject = subject.resize(size, Image.Resampling.LANCZOS)
+    # A arte desta variação é pixel art: interpolação suave cria um halo
+    # indesejado quando o personagem é exibido sobre tiles pequenos.
+    subject = subject.resize(size, Image.Resampling.NEAREST)
     canvas = Image.new('RGBA', (width, height), (0, 0, 0, 0))
     canvas.alpha_composite(subject, ((width - subject.width) // 2, height - padding - subject.height))
     return canvas
@@ -82,8 +84,8 @@ def motion_pose(sprite, scale_x, scale_y, shift_x, shift_y, angle):
         return sprite.copy()
     subject = sprite.crop(bbox)
     size = (max(1, round(subject.width * scale_x)), max(1, round(subject.height * scale_y)))
-    subject = subject.resize(size, Image.Resampling.LANCZOS)
-    subject = subject.rotate(angle, resample=Image.Resampling.BICUBIC, expand=True)
+    subject = subject.resize(size, Image.Resampling.NEAREST)
+    subject = subject.rotate(angle, resample=Image.Resampling.NEAREST, expand=True)
     frame = Image.new('RGBA', (256, 256), (0, 0, 0, 0))
     x = (256 - subject.width) // 2 + shift_x
     y = 244 - subject.height + shift_y

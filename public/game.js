@@ -302,7 +302,7 @@
       const sway = p.moving ? 0 : Math.sin(now / 650 + e.id * 1.7) * .35;
       const hurt = (e.hitUntil || 0) > now;
       ctx.save(); ctx.translate(dir[0] * attackStep, dir[1] * attackStep * .45);
-      ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+      ctx.imageSmoothingEnabled = false;
       if (hurt) ctx.globalAlpha = 0.6;
       if (hero) ctx.drawImage(img, sx - 5 + sway, sy + TS - 63 + breathe, 42, 63 - breathe);
       else ctx.drawImage(img, sx - 1 + sway, sy + TS - 50 + breathe, 34, 51 - breathe);
@@ -318,7 +318,7 @@
     ctx.fillStyle = 'rgba(0,0,0,.28)'; ctx.beginPath(); ctx.ellipse(sx + 16, sy + 29, iw > 40 ? 16 : 10, 4, 0, 0, 7); ctx.fill();
     ctx.save(); ctx.translate(dir[0] * attackStep, dir[1] * attackStep * .45);
     if ((e.hitUntil || 0) > now) ctx.globalAlpha = 0.6;
-    ctx.imageSmoothingEnabled = !!enemySprite; ctx.imageSmoothingQuality = 'high';
+    ctx.imageSmoothingEnabled = false;
     ctx.drawImage(img, Math.round(sx + (TS - iw) / 2), Math.round(sy + TS - ih - 1 + idleBob), iw, ih);
     ctx.restore();
     ctx.imageSmoothingEnabled = false;
@@ -333,7 +333,7 @@
       const img = enemy || SPR.entity('m', f.look, 0, 0, true);
       const size = enemy ? (f.look === 'dragon' ? 54 : (f.look === 'bear' || f.look === 'troll') ? 42 : 34) : img.width;
       ctx.save(); ctx.translate(sx + 16, sy + 20); ctx.rotate(Math.PI / 2); ctx.globalAlpha = 0.6;
-      ctx.imageSmoothingEnabled = !!enemy; ctx.imageSmoothingQuality = 'high';
+      ctx.imageSmoothingEnabled = false;
       ctx.drawImage(img, -size / 2, -size / 2 - 2, size * 0.9, size * 0.9); ctx.restore();
       ctx.imageSmoothingEnabled = false;
     } else { ctx.fillStyle = '#ddd'; ctx.fillRect(sx + 10, sy + 20, 12, 3); ctx.fillRect(sx + 13, sy + 16, 6, 6); }

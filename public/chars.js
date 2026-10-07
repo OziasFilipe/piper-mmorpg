@@ -1,7 +1,7 @@
 // Personagens em camadas (paper doll) a partir das folhas PNG geradas — As Aventuras do Piper
 const CHARS = (function () {
   const D = DEFS, SHEETS = {}, cache = new Map();
-  const ASSET_REV = 'ragnarok-3';
+  const ASSET_REV = 'pixel-mobile-1';
   let CW = 128, CH = 192, ready = false;
 
   async function load(onProgress) {

@@ -1,8 +1,8 @@
 // Biblioteca de cenário em PNG — carregada antes do mundo para que os objetos
 // do mapa possam usar arte final, mantendo um fallback no renderer.
 const WORLD = (function () {
-  // Versões leves (já no tamanho em que aparecem na tela). Os PNGs originais
-  // gigantes continuam na pasta, mas não são mais baixados pelo jogo.
+  // Cenário híbrido: a navegação continua legível em tiles, mas o mapa ganha
+  // texturas e objetos mais ricos para não parecer um RPG mobile antigo puro.
   const files = {
     oak: 'assets/world/oak-sm.png',
     hub: 'assets/world/hub-sm.png',
