@@ -62,6 +62,7 @@ const SPR = (function () {
             r(.8, 0, .35, 16, '#c29962'); r(14.85, 0, .35, 16, '#c29962');
           }
           break; }
+        case T.SNOW: case T.SNOWROCK: speckle(g, '#e6edf4', ['#d3dde8', '#f6f9fc', '#c9d5e2', '#ffffff', '#dce5ee'], 46, s); for (let i = 0; i < 3; i++) { const x = hash(i, s, 3) * 15 | 0, y = hash(i, s, 4) * 15 | 0; r(x, y, 2, .5, '#b9c6d4'); } break;
         case T.SAND: speckle(g, '#d8c07c', ['#c8ae68', '#e6d297', '#cdb571', '#f0dca1'], 42, s); for (let i = 0; i < 3; i++) { const x = hash(i, s, 3) * 15 | 0, y = hash(i, s, 4) * 15 | 0; r(x, y, 3, .5, '#b89b5d'); } break;
         case T.PATH: speckle(g, '#9b7b4f', ['#8a6b43', '#ac8c5d', '#927349', '#b09264'], 42, s); for (let i = 0; i < 5; i++) { const x = hash(i, s, 3) * 15 | 0, y = hash(i, s, 4) * 15 | 0; r(x, y, 1, 1, '#6f665b'); if (i % 2) r(x + 1, y + 1, 1, .5, '#c5a87a'); } break;
         case T.FLOOR:
@@ -282,112 +283,136 @@ const SPR = (function () {
     });
   }
 
-  // ------------------------------------------------------------ ÁGUA E PONTE CONTÍNUAS
-  // As texturas são desenhadas como padrões ancorados no MUNDO (não no quadrado),
-  // então os tiles vizinhos continuam a mesma imagem, sem emendas.
-  const GIMG = {}; let pats = null;
-  ['water-seamless.jpg', 'bridge-h.png', 'bridge-v.png'].forEach(n => {
-    const im = new Image(); im.onload = () => { GIMG[n] = im; pats = null; }; im.src = 'assets/world/' + n;
-  });
-  function getPats(ctx) {
-    if (pats) return pats;
-    if (!GIMG['water-seamless.jpg'] || !GIMG['bridge-h.png'] || !GIMG['bridge-v.png'] || typeof DOMMatrix === 'undefined') return null;
-    pats = { water: ctx.createPattern(GIMG['water-seamless.jpg'], 'repeat'), bh: ctx.createPattern(GIMG['bridge-h.png'], 'repeat'), bv: ctx.createPattern(GIMG['bridge-v.png'], 'repeat') };
-    return pats;
+  // ------------------------------------------------------------ CHÃO CONTÍNUO E EM CACHE
+  // Água, ponte e mato são padrões ancorados no MUNDO (sem emendas entre tiles).
+  // Todo o chão parado é desenhado uma vez em "pedaços" (8x8 tiles) e guardado;
+  // a cada quadro só se desenha 1 preenchimento de água animada + ~12 pedaços.
+  const GIMG = {};
+  const GFILES = ['water-seamless.jpg', 'bridge-h.png', 'bridge-v.png', 'grass-seamless.jpg'];
+  GFILES.forEach(n => { const im = new Image(); im.onload = () => { GIMG[n] = im; chunks.clear(); }; im.src = 'assets/world/' + n; });
+  const gReady = () => GFILES.every(n => GIMG[n]) && typeof DOMMatrix !== 'undefined';
+  function pats(c) {
+    return { water: c.createPattern(GIMG['water-seamless.jpg'], 'repeat'), bh: c.createPattern(GIMG['bridge-h.png'], 'repeat'),
+      bv: c.createPattern(GIMG['bridge-v.png'], 'repeat'), grass: c.createPattern(GIMG['grass-seamless.jpg'], 'repeat') };
   }
-  function fillPat(ctx, pat, tx, ty, sc, dx, dy, w, h) {
-    pat.setTransform(new DOMMatrix([sc, 0, 0, sc, tx, ty]));
-    ctx.fillStyle = pat; ctx.fillRect(dx, dy, w, h);
-  }
-  // contorno ondulado da margem, contínuo entre tiles (usa a coordenada do mundo)
+  function fillPat(c, pat, tx, ty, sc, dx, dy, w, h) { pat.setTransform(new DOMMatrix([sc, 0, 0, sc, tx, ty])); c.fillStyle = pat; c.fillRect(dx, dy, w, h); }
   const wob = u => 3.4 + 1.4 * Math.sin(u * 0.21) + 0.8 * Math.sin(u * 0.53 + 1.7);
-  const BANK = { [T.SAND]: '#d9c283', [T.PATH]: '#a9875a', [T.FLOOR]: '#9c9484', [T.WALL]: '#6b655d' };
-  function shoreEdge(ctx, side, dx, dy, wx, wy, col, foamA) {
-    // side: 0 norte, 1 sul, 2 oeste, 3 leste
+  const BANK = { [T.SAND]: '#d9c283', [T.PATH]: '#a9875a', [T.FLOOR]: '#9c9484', [T.WALL]: '#6b655d', [T.SNOW]: '#e3ebf2', [T.SNOWROCK]: '#e3ebf2', [T.CAVE]: '#4a3b2f', [T.CAVEWALL]: '#3a2f27' };
+  const bankColor = k => BANK[k] || '#c9b47c';
+  function shoreEdge(c, side, dx, dy, wx, wy, col) {
     const pts = [];
     for (let i = 0; i <= 32; i += 2) {
-      const u = (side < 2 ? wx : wy) + i, d = wob(u);
-      if (side === 0) pts.push([dx + i, dy + d]);
-      else if (side === 1) pts.push([dx + i, dy + 32 - d]);
-      else if (side === 2) pts.push([dx + d, dy + i]);
-      else pts.push([dx + 32 - d, dy + i]);
+      const d = wob((side < 2 ? wx : wy) + i);
+      pts.push(side === 0 ? [dx + i, dy + d] : side === 1 ? [dx + i, dy + 32 - d] : side === 2 ? [dx + d, dy + i] : [dx + 32 - d, dy + i]);
     }
-    // sombra de profundidade logo abaixo da margem
-    const g = side === 0 ? ctx.createLinearGradient(0, dy, 0, dy + 13) : side === 1 ? ctx.createLinearGradient(0, dy + 32, 0, dy + 19)
-      : side === 2 ? ctx.createLinearGradient(dx, 0, dx + 13, 0) : ctx.createLinearGradient(dx + 32, 0, dx + 19, 0);
+    const g = side === 0 ? c.createLinearGradient(0, dy, 0, dy + 13) : side === 1 ? c.createLinearGradient(0, dy + 32, 0, dy + 19)
+      : side === 2 ? c.createLinearGradient(dx, 0, dx + 13, 0) : c.createLinearGradient(dx + 32, 0, dx + 19, 0);
     g.addColorStop(0, 'rgba(6,30,60,.38)'); g.addColorStop(1, 'rgba(6,30,60,0)');
-    ctx.fillStyle = g; ctx.fillRect(dx, dy, 32, 32);
-    // faixa de terra/areia
-    ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
-    for (const q of pts) ctx.lineTo(q[0], q[1]);
-    if (side === 0) { ctx.lineTo(dx + 32.05, dy - 0.05); ctx.lineTo(dx - 0.05, dy - 0.05); }
-    else if (side === 1) { ctx.lineTo(dx + 32.05, dy + 32.05); ctx.lineTo(dx - 0.05, dy + 32.05); }
-    else if (side === 2) { ctx.lineTo(dx - 0.05, dy + 32.05); ctx.lineTo(dx - 0.05, dy - 0.05); }
-    else { ctx.lineTo(dx + 32.05, dy + 32.05); ctx.lineTo(dx + 32.05, dy - 0.05); }
-    ctx.closePath(); ctx.fillStyle = col; ctx.fill();
-    // linha de areia molhada + espuma
-    ctx.lineWidth = 1.6; ctx.strokeStyle = 'rgba(90,70,40,.45)';
-    ctx.beginPath(); pts.forEach((q, i) => i ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1])); ctx.stroke();
-    const o = 1.6, ofs = side === 0 ? [0, o] : side === 1 ? [0, -o] : side === 2 ? [o, 0] : [-o, 0];
-    ctx.lineWidth = 1.2; ctx.strokeStyle = `rgba(235,250,255,${foamA})`;
-    ctx.beginPath(); pts.forEach((q, i) => i ? ctx.lineTo(q[0] + ofs[0], q[1] + ofs[1]) : ctx.moveTo(q[0] + ofs[0], q[1] + ofs[1])); ctx.stroke();
+    c.fillStyle = g; c.fillRect(dx, dy, 32, 32);
+    c.beginPath(); c.moveTo(pts[0][0], pts[0][1]); for (const q of pts) c.lineTo(q[0], q[1]);
+    if (side === 0) { c.lineTo(dx + 32, dy); c.lineTo(dx, dy); } else if (side === 1) { c.lineTo(dx + 32, dy + 32); c.lineTo(dx, dy + 32); }
+    else if (side === 2) { c.lineTo(dx, dy + 32); c.lineTo(dx, dy); } else { c.lineTo(dx + 32, dy + 32); c.lineTo(dx + 32, dy); }
+    c.closePath(); c.fillStyle = col; c.fill();
+    c.lineWidth = 1.6; c.strokeStyle = 'rgba(90,70,40,.45)';
+    c.beginPath(); pts.forEach((q, i) => i ? c.lineTo(q[0], q[1]) : c.moveTo(q[0], q[1])); c.stroke();
+    const o = 1.6, of = side === 0 ? [0, o] : side === 1 ? [0, -o] : side === 2 ? [o, 0] : [-o, 0];
+    c.lineWidth = 1.2; c.strokeStyle = 'rgba(235,250,255,.55)';
+    c.beginPath(); pts.forEach((q, i) => i ? c.lineTo(q[0] + of[0], q[1] + of[1]) : c.moveTo(q[0] + of[0], q[1] + of[1])); c.stroke();
   }
-  function bankColor(k) { return BANK[k] || '#c9b47c'; }
-  function waterTile(ctx, x, y, dx, dy, now, ox, oy, at, P) {
-    const t = now / 1000;
-    // correnteza lenta: o padrão inteiro desliza, sem camadas transparentes (que marcariam a grade)
-    fillPat(ctx, P.water, ox + t * 5 + Math.sin(t * 0.6) * 3, oy + t * 2.5, 0.25, dx, dy, 32.05, 32.05);
-    const k = (xx, yy) => at(xx, yy);
+  // margens/sombras desenhadas por cima da água (a água em si fica transparente no pedaço)
+  function waterOverlay(c, x, y, dx, dy, at) {
     const land = q => q !== T.WATER && q !== T.BRIDGE;
-    const n = k(x, y - 1), s = k(x, y + 1), w = k(x - 1, y), e = k(x + 1, y);
-    // sombra da ponte na água
-    const shade = (x0, y0, x1, y1) => { const g = ctx.createLinearGradient(x0, y0, x1, y1); g.addColorStop(0, 'rgba(0,0,0,.42)'); g.addColorStop(1, 'rgba(0,0,0,0)'); ctx.fillStyle = g; ctx.fillRect(dx, dy, 32, 32); };
+    const n = at(x, y - 1), s = at(x, y + 1), w = at(x - 1, y), e = at(x + 1, y);
+    const shade = (x0, y0, x1, y1) => { const g = c.createLinearGradient(x0, y0, x1, y1); g.addColorStop(0, 'rgba(0,0,0,.42)'); g.addColorStop(1, 'rgba(0,0,0,0)'); c.fillStyle = g; c.fillRect(dx, dy, 32, 32); };
     if (n === T.BRIDGE) shade(0, dy, 0, dy + 9); if (s === T.BRIDGE) shade(0, dy + 32, 0, dy + 26);
     if (w === T.BRIDGE) shade(dx, 0, dx + 9, 0); if (e === T.BRIDGE) shade(dx + 32, 0, dx + 26, 0);
-    const foam = (0.45 + 0.2 * Math.sin(now / 650 + x * 0.7 + y * 0.4)).toFixed(2);
     const wx = x * 32, wy = y * 32;
-    if (land(n)) shoreEdge(ctx, 0, dx, dy, wx, wy, bankColor(n), foam);
-    if (land(s)) shoreEdge(ctx, 1, dx, dy, wx, wy, bankColor(s), foam);
-    if (land(w)) shoreEdge(ctx, 2, dx, dy, wx, wy, bankColor(w), foam);
-    if (land(e)) shoreEdge(ctx, 3, dx, dy, wx, wy, bankColor(e), foam);
-    // cantos externos (terra só na diagonal)
+    if (land(n)) shoreEdge(c, 0, dx, dy, wx, wy, bankColor(n));
+    if (land(s)) shoreEdge(c, 1, dx, dy, wx, wy, bankColor(s));
+    if (land(w)) shoreEdge(c, 2, dx, dy, wx, wy, bankColor(w));
+    if (land(e)) shoreEdge(c, 3, dx, dy, wx, wy, bankColor(e));
     const corner = (cx, cy, q, ang) => {
-      ctx.fillStyle = bankColor(q); ctx.beginPath(); ctx.arc(cx, cy, 5.2, ang, ang + Math.PI / 2); ctx.lineTo(cx, cy); ctx.fill();
-      ctx.strokeStyle = `rgba(235,250,255,${foam})`; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.arc(cx, cy, 6.6, ang, ang + Math.PI / 2); ctx.stroke();
+      c.fillStyle = bankColor(q); c.beginPath(); c.moveTo(cx, cy); c.arc(cx, cy, 5.2, ang, ang + Math.PI / 2); c.closePath(); c.fill();
+      c.strokeStyle = 'rgba(235,250,255,.55)'; c.lineWidth = 1.2; c.beginPath(); c.arc(cx, cy, 6.6, ang, ang + Math.PI / 2); c.stroke();
     };
-    const nw = k(x - 1, y - 1), ne = k(x + 1, y - 1), sw = k(x - 1, y + 1), se = k(x + 1, y + 1);
+    const nw = at(x - 1, y - 1), ne = at(x + 1, y - 1), sw = at(x - 1, y + 1), se = at(x + 1, y + 1);
     if (!land(n) && !land(w) && land(nw)) corner(dx, dy, nw, 0);
     if (!land(n) && !land(e) && land(ne)) corner(dx + 32, dy, ne, Math.PI / 2);
     if (!land(s) && !land(e) && land(se)) corner(dx + 32, dy + 32, se, Math.PI);
     if (!land(s) && !land(w) && land(sw)) corner(dx, dy + 32, sw, -Math.PI / 2);
   }
-  function bridgeTile(ctx, x, y, dx, dy, now, ox, oy, at, P) {
+  function bridgeTile(c, x, y, dx, dy, ox, oy, at, P) {
     const isB = (xx, yy) => { const q = at(xx, yy); return q === T.BRIDGE || q === T.PATH; };
     let hx = 0, vy = 0;
     for (let k = 1; k <= 4; k++) { if (isB(x - k, y)) hx++; else break; }
     for (let k = 1; k <= 4; k++) { if (isB(x + k, y)) hx++; else break; }
     for (let k = 1; k <= 4; k++) { if (isB(x, y - k)) vy++; else break; }
     for (let k = 1; k <= 4; k++) { if (isB(x, y + k)) vy++; else break; }
-    if (hx > vy) {      // ponte horizontal: tábuas atravessam de cima a baixo das linhas da ponte
-      let r0 = y; if (at(x, y - 1) === T.BRIDGE) r0 = y - 1;
-      const rows = at(x, r0 + 1) === T.BRIDGE ? 2 : 1, sc = rows * 32 / 256;
-      fillPat(ctx, P.bh, ox, oy + r0 * 32, sc, dx, dy, 32.05, 32.05);
-    } else {            // ponte vertical
-      let c0 = x; if (at(x - 1, y) === T.BRIDGE) c0 = x - 1;
-      const cols = at(c0 + 1, y) === T.BRIDGE ? 2 : 1, sc = cols * 32 / 256;
-      fillPat(ctx, P.bv, ox + c0 * 32, oy, sc, dx, dy, 32.05, 32.05);
+    const horiz = hx > vy;
+    if (horiz) { let r0 = y; if (at(x, y - 1) === T.BRIDGE) r0 = y - 1; const rows = at(x, r0 + 1) === T.BRIDGE ? 2 : 1; fillPat(c, P.bh, ox, oy + r0 * 32, rows * 32 / 256, dx, dy, 32, 32); }
+    else { let c0 = x; if (at(x - 1, y) === T.BRIDGE) c0 = x - 1; const cols = at(c0 + 1, y) === T.BRIDGE ? 2 : 1; fillPat(c, P.bv, ox + c0 * 32, oy, cols * 32 / 256, dx, dy, 32, 32); }
+    const endShade = (x0, y0, x1, y1) => { const g = c.createLinearGradient(x0, y0, x1, y1); g.addColorStop(0, 'rgba(40,25,10,.35)'); g.addColorStop(1, 'rgba(40,25,10,0)'); c.fillStyle = g; c.fillRect(dx, dy, 32, 32); };
+    const land = q => q === T.PATH || q === T.SAND;
+    if (horiz) { if (land(at(x - 1, y))) endShade(dx, 0, dx + 5, 0); if (land(at(x + 1, y))) endShade(dx + 32, 0, dx + 27, 0); }
+    else { if (land(at(x, y - 1))) endShade(0, dy, 0, dy + 5); if (land(at(x, y + 1))) endShade(0, dy + 32, 0, dy + 27); }
+  }
+  function grassTile(c, t, x, y, dx, dy, ox, oy, P) {
+    fillPat(c, P.grass, ox, oy, 0.25, dx, dy, 32, 32);
+    if (t === T.FLOWER) for (let i = 0; i < 3; i++) {
+      const fx = dx + 3 + hash(i, x, y) * 24, fy = dy + 3 + hash(x, i, y) * 24, col = ['#f3e04a', '#f06a8a', '#ffffff', '#9a7cf0'][(hash(i, y, x) * 4) | 0];
+      c.fillStyle = col; for (const [a, b] of [[-1.6, 0], [1.6, 0], [0, -1.6], [0, 1.6]]) { c.beginPath(); c.arc(fx + a, fy + b, 1.4, 0, 7); c.fill(); }
+      c.fillStyle = '#e9a020'; c.beginPath(); c.arc(fx, fy, 1.1, 0, 7); c.fill();
     }
-    // ponta da ponte encontrando a terra: sombra suave
-    const endShade = (x0, y0, x1, y1) => { const g = ctx.createLinearGradient(x0, y0, x1, y1); g.addColorStop(0, 'rgba(40,25,10,.35)'); g.addColorStop(1, 'rgba(40,25,10,0)'); ctx.fillStyle = g; ctx.fillRect(dx, dy, 32, 32); };
-    if (hx > vy) { if (at(x - 1, y) === T.PATH || at(x - 1, y) === T.SAND) endShade(dx, 0, dx + 5, 0); if (at(x + 1, y) === T.PATH || at(x + 1, y) === T.SAND) endShade(dx + 32, 0, dx + 27, 0); }
-    else { if (at(x, y - 1) === T.PATH || at(x, y - 1) === T.SAND) endShade(0, dy, 0, dy + 5); if (at(x, y + 1) === T.PATH || at(x, y + 1) === T.SAND) endShade(0, dy + 32, 0, dy + 27); }
   }
-  // desenha um tile do chão; água e ponte usam as texturas contínuas
-  function ground(ctx, t, x, y, dx, dy, v, wf, now, at, ox, oy) {
-    const P = (t === T.WATER || t === T.BRIDGE) ? getPats(ctx) : null;
-    if (P) { if (t === T.WATER) waterTile(ctx, x, y, dx, dy, now, ox, oy, at, P); else bridgeTile(ctx, x, y, dx, dy, now, ox, oy, at, P); return; }
-    ctx.drawImage(tile(t, v, wf), dx, dy, 32.05, 32.05);
+  // chão embaixo da árvore: neve/terra escura quando a árvore está nesses terrenos
+  function treeBase(x, y, at) {
+    for (const [a, b] of [[0, 1], [1, 0], [-1, 0], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1]]) {
+      const q = at(x + a, y + b); if (q === T.SNOW || q === T.SNOWROCK) return T.SNOW; if (q === T.CAVE || q === T.CAVEWALL) return T.CAVE; if (q === T.GRASS || q === T.FLOWER) return T.GRASS;
+    }
+    return T.GRASS;
   }
+  // cache de pedaços (LRU simples)
+  const CHK = 8, CPX = CHK * 32, chunks = new Map(), MAX_CHUNKS = 30;
+  function chunk(cx, cy, at, RS) {
+    const key = cx + ',' + cy + ',' + RS;
+    let cv = chunks.get(key);
+    if (cv) { chunks.delete(key); chunks.set(key, cv); return cv; }
+    cv = mk(Math.ceil(CPX * RS), Math.ceil(CPX * RS));
+    const c = cv.getContext('2d'); c.scale(RS, RS); c.imageSmoothingEnabled = false;
+    const P = pats(c), ox = -cx * CPX, oy = -cy * CPX;
+    for (let j = 0; j < CHK; j++) for (let i = 0; i < CHK; i++) {
+      const x = cx * CHK + i, y = cy * CHK + j, t = at(x, y), dx = i * 32, dy = j * 32;
+      if (t === T.WATER) waterOverlay(c, x, y, dx, dy, at);
+      else if (t === T.BRIDGE) bridgeTile(c, x, y, dx, dy, ox, oy, at, P);
+      else if (t === T.TREE && treeBase(x, y, at) !== T.GRASS) c.drawImage(tile(treeBase(x, y, at), hash(x, y, 9) * 4 | 0, 0), dx, dy, 32, 32);
+      else if (t === T.GRASS || t === T.TREE || t === T.FLOWER) grassTile(c, t, x, y, dx, dy, ox, oy, P);
+      else c.drawImage(tile(t, hash(x, y, 9) * 4 | 0, 0), dx, dy, 32, 32);
+    }
+    chunks.set(key, cv);
+    while (chunks.size > MAX_CHUNKS) chunks.delete(chunks.keys().next().value);
+    return cv;
+  }
+  let mainPat = null, mainCtx = null;
+  function drawGround(ctx, x0, y0, x1, y1, ox, oy, now, at, K) {
+    if (!gReady()) {   // texturas ainda carregando: desenho simples
+      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) ctx.drawImage(tile(at(x, y), hash(x, y, 9) * 4 | 0, 0), x * 32 + ox, y * 32 + oy, 32.05, 32.05);
+      return;
+    }
+    if (mainCtx !== ctx) { mainCtx = ctx; mainPat = ctx.createPattern(GIMG['water-seamless.jpg'], 'repeat'); }
+    const t = now / 1000;
+    fillPat(ctx, mainPat, ox + t * 5 + Math.sin(t * 0.6) * 3, oy + t * 2.5, 0.25, x0 * 32 + ox, y0 * 32 + oy, (x1 - x0 + 1) * 32, (y1 - y0 + 1) * 32);
+    const RS = K >= 2.6 ? 2.5 : K >= 1.8 ? 2 : 1.5;
+    const sm = ctx.imageSmoothingEnabled; ctx.imageSmoothingEnabled = true;
+    const cx0 = Math.floor(x0 / CHK), cx1 = Math.floor(x1 / CHK), cy0 = Math.floor(y0 / CHK), cy1 = Math.floor(y1 / CHK);
+    for (let cy = cy0; cy <= cy1; cy++) for (let cx = cx0; cx <= cx1; cx++)
+      ctx.drawImage(chunk(cx, cy, at, RS), cx * CPX + ox, cy * CPX + oy, CPX + 0.1, CPX + 0.1);
+    ctx.imageSmoothingEnabled = sm;
+    // prepara 1 pedaço vizinho por quadro (evita engasgo ao andar para área nova)
+    for (let cy = cy0 - 1; cy <= cy1 + 1; cy++) for (let cx = cx0 - 1; cx <= cx1 + 1; cx++) {
+      if (!chunks.has(cx + ',' + cy + ',' + RS)) { chunk(cx, cy, at, RS); return; }
+    }
+  }
+  const resetGround = () => chunks.clear();
 
-  return { tile, ground, treeObj, rockObj, entity, itemIcon, spellIcon, hash, mk };
+  return { tile, drawGround, resetGround, treeObj, rockObj, entity, itemIcon, spellIcon, hash, mk };
 })();

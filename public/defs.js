@@ -7,8 +7,8 @@
   D.HAIR_COLORS = { preto: '#2b2329', castanho: '#6e4024', loiro: '#e6c25e', ruivo: '#c4492b', branco: '#ecebe7', azul: '#3c6bd2', rosa: '#e07ab0' };
   D.SKINS = ['#f7d5b8', '#dca57e', '#8e5b3c'];
 
-  D.T = { GRASS: 0, TREE: 1, WATER: 2, SAND: 3, FLOOR: 4, WALL: 5, CAVE: 6, PATH: 7, ROCK: 8, FLOWER: 9, BRIDGE: 10, CAVEWALL: 11 };
-  D.BLOCK = [0, 1, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1];
+  D.T = { GRASS: 0, TREE: 1, WATER: 2, SAND: 3, FLOOR: 4, WALL: 5, CAVE: 6, PATH: 7, ROCK: 8, FLOWER: 9, BRIDGE: 10, CAVEWALL: 11, SNOW: 12, SNOWROCK: 13 };
+  D.BLOCK = [0, 1, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 1];
 
   // Fórmula clássica de experiência por nível
   D.xpFor = (L) => L <= 1 ? 0 : Math.floor(50 / 3 * (L * L * L - 6 * L * L + 17 * L - 12));
@@ -111,7 +111,13 @@
     forest: [['wolf', 4], ['goblin', 4], ['bear', 2]],
     wild:   [['orc', 5], ['shaman', 2], ['troll', 2]],
     desert: [['scorpion', 4], ['mummy', 3]],
-    cave:   [['skeleton', 5], ['spider', 3], ['dragon', 0.4]]
+    cave:   [['skeleton', 5], ['spider', 3], ['dragon', 0.4]],
+    coast:     [['snake', 3], ['scorpion', 3], ['goblin', 4]],
+    jungle:    [['orc', 5], ['shaman', 3], ['bear', 2]],
+    snowfield: [['wolf', 5], ['bear', 3], ['troll', 2]],
+    peaks:     [['troll', 4], ['skeleton', 4], ['mummy', 1]],
+    shadow:    [['skeleton', 4], ['mummy', 4], ['spider', 2]],
+    abyss:     [['spider', 4], ['skeleton', 2], ['dragon', 1]]
   };
 
   D.TASKS = [
@@ -129,6 +135,23 @@
     { mon: 'dragon', n: 5, gold: 10000, xp: 100000, item: 'a_dragon' }
   ];
 
+  // Regiões do mundo: cada uma é um mapa separado, carregado só quando o jogador viaja.
+  // wx/wy = posição no mapa-múndi (0-100). zones = [perto da cidade, longe da cidade].
+  D.REGIONS = [
+    { id: 0, name: 'Vale de Aurora', town: 'Aurora', biome: 'green', lvl: 1, cost: 0, wx: 22, wy: 55,
+      desc: 'Campos, florestas, deserto a nordeste e a caverna do dragão a sudeste.',
+      labels: [{ x: 80, y: 66, t: 'Aurora' }, { x: 128, y: 30, t: 'Deserto' }, { x: 130, y: 132, t: 'Caverna' }, { x: 80, y: 40, t: 'Campos' }, { x: 30, y: 120, t: 'Floresta' }] },
+    { id: 1, name: 'Ilha Coral', town: 'Porto Coral', biome: 'island', lvl: 10, cost: 120, wx: 58, wy: 78, zones: ['coast', 'jungle'],
+      desc: 'Praias e selvas. Goblins, cobras e escorpiões na costa; orcs e xamãs na selva.',
+      labels: [{ x: 80, y: 66, t: 'Porto Coral' }, { x: 80, y: 120, t: 'Costa' }, { x: 30, y: 30, t: 'Selva' }] },
+    { id: 2, name: 'Picos Gelados', town: 'Forte Gélido', biome: 'snow', lvl: 20, cost: 350, wx: 48, wy: 18, zones: ['snowfield', 'peaks'],
+      desc: 'Montanhas nevadas. Lobos, ursos e trolls; esqueletos e múmias nos picos.',
+      labels: [{ x: 80, y: 66, t: 'Forte Gélido' }, { x: 80, y: 120, t: 'Planície Branca' }, { x: 130, y: 30, t: 'Picos' }] },
+    { id: 3, name: 'Terras Sombrias', town: 'Cidadela Sombria', biome: 'dark', lvl: 30, cost: 800, wx: 82, wy: 40, zones: ['shadow', 'abyss'],
+      desc: 'Terra amaldiçoada. Múmias, aranhas gigantes e dragões.',
+      labels: [{ x: 80, y: 66, t: 'Cidadela' }, { x: 80, y: 120, t: 'Vale das Sombras' }, { x: 30, y: 30, t: 'Abismo' }] }
+  ];
+
   D.NPCS = [
     { id: 'smith', name: 'Ferreiro Bruno', look: 'c|npc|n_apron||npc_hammer||1|curto|preto|preto', dx: -6, dy: -5, shop: 'equip', greet: 'Bem-vindo à forja! Armas e armaduras de qualidade.' },
     { id: 'alch', name: 'Alquimista Lia', look: 'c|npc|n_green||||0|rabo|ruivo|', dx: 6, dy: -5, shop: 'potions', greet: 'Poções fresquinhas! Também compro o que você caçar.' },
@@ -140,7 +163,21 @@
     { id: 'guard2', name: 'Guarda Téo', look: 'c|warrior|a_chain|h_iron|spear|s_guard|1|curto|castanho|', dx: 2, dy: 9, talk: [
       'Dizem que há dragões na caverna a sudeste... só vá depois do nível 30!',
       'O deserto a nordeste é cheio de múmias e escorpiões.',
-      'Fale com o Mestre Aldo para conseguir missões de caça.'] }
+      'Fale com o Mestre Aldo para conseguir missões de caça.',
+      'A Guardiã do Portal leva você para outras terras.'] },
+    { id: 'portal', r: 0, name: 'Guardiã do Portal', look: 'c|wizard|a_robe||m_arcane||2|longo|branco|', dx: 3, dy: 3, travel: true },
+    { id: 'smith', r: 1, name: 'Ferreira Marina', look: 'c|npc|n_apron||npc_hammer||2|rabo|preto|', dx: -6, dy: -5, shop: 'equip', greet: 'Aço forjado com água do mar! Dá uma olhada.' },
+    { id: 'alch', r: 1, name: 'Curandeiro Kai', look: 'c|npc|n_green||||1|curto|preto|', dx: 6, dy: -5, shop: 'potions', greet: 'Poções da ilha, fresquinhas.' },
+    { id: 'portal', r: 1, name: 'Guardião do Portal', look: 'c|wizard|a_robe||m_arcane||1|curto|azul|azul', dx: 3, dy: 3, travel: true },
+    { id: 'guard1', r: 1, name: 'Vigia Lúcio', look: 'c|warrior|a_leather|h_leather|spear|s_wood|1|curto|castanho|', dx: -2, dy: -9, talk: ['A selva ao norte é cheia de orcs. Cuidado!', 'Escorpiões adoram a areia quente da costa.'] },
+    { id: 'smith', r: 2, name: 'Ferreiro Bjorn', look: 'c|npc|n_apron||npc_hammer||0|longo|loiro|loiro', dx: -6, dy: -5, shop: 'equip', greet: 'Armaduras que aguentam o frio e os trolls!' },
+    { id: 'alch', r: 2, name: 'Alquimista Neve', look: 'c|npc|n_white||||0|longo|branco|', dx: 6, dy: -5, shop: 'potions', greet: 'Poções quentinhas para enfrentar a neve.' },
+    { id: 'portal', r: 2, name: 'Guardião do Portal', look: 'c|wizard|a_chain||m_ice||0|curto|branco|branco', dx: 3, dy: 3, travel: true },
+    { id: 'guard1', r: 2, name: 'Sentinela Erik', look: 'c|warrior|a_plate|h_steel|spear|s_tower|0|curto|loiro|', dx: -2, dy: -9, talk: ['Nos picos a nordeste vivem esqueletos antigos.', 'Trolls do gelo batem forte. Leve poções grandes.'] },
+    { id: 'smith', r: 3, name: 'Forjador Vex', look: 'c|npc|n_apron||npc_hammer||2|curto|preto|preto', dx: -6, dy: -5, shop: 'equip', greet: 'Só os fortes chegam até aqui.' },
+    { id: 'alch', r: 3, name: 'Bruxa Morgana', look: 'c|wizard|a_dragon||m_fire||0|longo|preto|', dx: 6, dy: -5, shop: 'potions', greet: 'Poções sombrias... mas funcionam.' },
+    { id: 'portal', r: 3, name: 'Guardião do Portal', look: 'c|wizard|a_dragon||m_dragon||1|longo|ruivo|', dx: 3, dy: 3, travel: true },
+    { id: 'guard1', r: 3, name: 'Cavaleiro Negro', look: 'c|warrior|a_dragon|h_steel|spear|s_tower|2|curto|preto|', dx: -2, dy: -9, talk: ['Os dragões dormem no abismo a noroeste.', 'Aranhas gigantes envenenam. Não lute sozinho.'] }
   ];
 
   D.SHOPS = {

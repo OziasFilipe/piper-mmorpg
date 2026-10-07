@@ -167,6 +167,10 @@ label.lb{display:block;font-size:12px;color:var(--dim);margin:8px 0 3px;text-tra
 #chatIn{margin-top:8px}
 #deathMsg{position:absolute;inset:0;display:none;align-items:center;justify-content:center;flex-direction:column;background:radial-gradient(rgba(80,0,0,.35),rgba(30,0,0,.75));font-family:Lora;font-size:48px;color:#ffd6d6;text-shadow:0 3px 10px #000;pointer-events:none;z-index:30}
 #tip{position:fixed;z-index:60;pointer-events:none;display:none}
+#regionBanner{position:absolute;left:50%;top:22%;transform:translateX(-50%);text-align:center;font-family:Lora,serif;font-weight:700;font-size:min(7vh,40px);color:#ffe9b0;text-shadow:0 3px 12px #000,0 0 2px #000;pointer-events:none;opacity:0;z-index:25;white-space:nowrap}
+#regionBanner small{display:block;font-family:Poppins,sans-serif;font-size:.42em;letter-spacing:4px;color:#fff;text-transform:uppercase}
+#regionBanner.on{animation:banner 3.6s ease forwards}
+@keyframes banner{0%{opacity:0;transform:translate(-50%,10px)}15%,70%{opacity:1;transform:translate(-50%,0)}100%{opacity:0}}
 .prev canvas{width:auto;height:min(54vh,300px);max-width:100%}
 @media (max-height:520px){
   #title.form .logo{width:min(22vw,24vh);top:1%}
@@ -254,6 +258,7 @@ label.lb{display:block;font-size:12px;color:var(--dim);margin:8px 0 3px;text-tra
     <canvas id="mini" width="260" height="260"></canvas>
     <div id="gold">0 ouro</div>
     <div class="menuBtns">
+      <button class="ib" data-open="map" title="Mapa"><svg viewBox="0 0 24 24"><path d="M3 6l6-2 6 2 6-2v14l-6 2-6-2-6 2z"/><path d="M9 4v14M15 6v14"/></svg></button>
       <button class="ib" data-open="inv" title="Mochila"><svg viewBox="0 0 24 24"><path d="M6 8h12l1 12H5z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/></svg></button>
       <button class="ib" data-open="stats" title="Personagem"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c1-4 4-6 8-6s7 2 8 6"/></svg><i class="dot" id="ptsDot"></i></button>
       <button class="ib" data-open="quest" title="Missão"><svg viewBox="0 0 24 24"><path d="M7 3h10v18l-5-3-5 3z"/></svg></button>
@@ -271,6 +276,7 @@ label.lb{display:block;font-size:12px;color:var(--dim);margin:8px 0 3px;text-tra
     <div class="ab pot" id="potHp" style="right:166px;bottom:2px;background:radial-gradient(#d9343b,#5a0f12)"><canvas width="32" height="32"></canvas><b id="nHp">0</b></div>
     <div class="ab pot" id="potMp" style="right:160px;bottom:52px;background:radial-gradient(#2f63e0,#0f1d5a)"><canvas width="32" height="32"></canvas><b id="nMp">0</b></div>
   </div>
+  <div id="regionBanner"></div>
   <div id="deathMsg">Você morreu<small style="font-size:18px;font-family:Poppins">Renascendo na cidade...</small></div>
 </div>
 
@@ -301,6 +307,11 @@ label.lb{display:block;font-size:12px;color:var(--dim);margin:8px 0 3px;text-tra
   <div class="mb"><div class="npcd"><canvas id="dlgCv" width="128" height="192"></canvas><p id="dlgText"></p></div>
   <div style="text-align:right;margin-top:10px"><button class="gold-btn" data-close>OK</button></div></div>
 </div></div>
+<div class="modal" id="mMap"><div class="glass" style="width:min(900px,97vw)">
+  <div class="mh"><h2 id="mapTitle">Mapa</h2><div class="tabs2"><button id="mapTabR" class="on">Região</button><button id="mapTabW">Mundo</button></div><button class="x" data-close>✕</button></div>
+  <div class="mb" style="display:flex;flex-direction:column;align-items:center;gap:8px"><canvas id="mapCv" width="900" height="560" style="width:100%;max-height:62vh;object-fit:contain;border-radius:10px"></canvas>
+  <div id="mapInfo" style="width:100%;font-size:13px;color:var(--dim);line-height:1.4"></div></div>
+</div></div>
 <div class="modal" id="mChat"><div class="glass" style="width:min(640px,96vw)">
   <div class="mh"><h2>Chat</h2><button class="x" data-close>✕</button></div>
   <div class="mb"><div id="chatLog"></div><input class="field" id="chatIn" maxlength="140" placeholder="Digite e toque Enter...  (/online)"></div>
@@ -308,6 +319,7 @@ label.lb{display:block;font-size:12px;color:var(--dim);margin:8px 0 3px;text-tra
 
 <script src="defs.js"></script>
 <script src="world-assets.js"></script>
+<script src="enemy-assets.js"></script>
 <script src="sprites.js"></script>
 <script src="chars.js"></script>
 <script src="game.js"></script>

@@ -1,6 +1,7 @@
 // Personagens em camadas (paper doll) a partir das folhas PNG geradas — As Aventuras do Piper
 const CHARS = (function () {
   const D = DEFS, SHEETS = {}, cache = new Map();
+  const ASSET_REV = 'ragnarok-3';
   let CW = 128, CH = 192, ready = false;
 
   async function load(onProgress) {
@@ -9,7 +10,7 @@ const CHARS = (function () {
     let done = 0;
     await Promise.all(man.sheets.map(n => new Promise(res => {
       const im = new Image(); im.onload = () => { SHEETS[n] = im; done++; onProgress && onProgress(done / man.sheets.length); res(); };
-      im.onerror = () => { done++; res(); }; im.src = 'assets/chars/' + n + '.png';
+      im.onerror = () => { done++; res(); }; im.src = `assets/chars/${n}.png?rev=${ASSET_REV}`;
     })));
     ready = true;
   }
@@ -39,6 +40,16 @@ const CHARS = (function () {
     let c = cache.get(key); if (c) return c;
     c = document.createElement('canvas'); c.width = CW; c.height = CH;
     const g = c.getContext('2d');
+    // Os corpos principais agora são folhas completas de alta qualidade.
+    // Usar a folha inteira evita que cabelo, armadura e armas do sistema
+    // antigo sejam desenhados por cima do novo personagem.
+    const voc = look.split('|')[1];
+    const direct = SHEETS['body_' + (voc === 'wizard' ? 1 : 0)];
+    if (direct && direct.width === CW * 3 && direct.height === CH * 4) {
+      g.drawImage(direct, frame * CW, dir * CH, CW, CH, 0, 0, CW, CH);
+      if (ready) cache.set(key, c);
+      return c;
+    }
     for (const n of layers(look, dir)) { const im = SHEETS[n]; if (im) g.drawImage(im, frame * CW, dir * CH, CW, CH, 0, 0, CW, CH); }
     if (ready) cache.set(key, c);
     return c;

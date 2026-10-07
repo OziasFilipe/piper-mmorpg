@@ -11,12 +11,15 @@ const W = D.W, H = D.H, CX = W >> 1, CY = H >> 1;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data'), SAVE_FILE = path.join(DATA_DIR, 'players.json');
 const TICK = 100;
 
-// ------------------------------------------------------------------ MAPA
+// ------------------------------------------------------------------ MUNDO (várias regiões)
+// Cada região é um mapa W x H. Ficam lado a lado num grande arranjo, separadas
+// pelo mar da borda, então a lógica de combate/movimento é a mesma em todas.
+// O cliente só recebe os tiles da região onde o jogador está.
 function rng(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
 const R = rng(1337);
-function noise(cell) {
+function noise(cell, rnd = R) {
   const gw = Math.ceil(W / cell) + 2, gh = Math.ceil(H / cell) + 2, g = [];
-  for (let i = 0; i < gw * gh; i++) g.push(R());
+  for (let i = 0; i < gw * gh; i++) g.push(rnd());
   const sm = t => t * t * (3 - 2 * t);
   return (x, y) => {
     const fx = x / cell, fy = y / cell, ix = Math.floor(fx), iy = Math.floor(fy), tx = sm(fx - ix), ty = sm(fy - iy);
@@ -24,65 +27,93 @@ function noise(cell) {
     return (a * (1 - tx) + b * tx) * (1 - ty) + (c * (1 - tx) + d * tx) * ty;
   };
 }
-const tiles = new Uint8Array(W * H);
-const get = (x, y) => (x < 0 || y < 0 || x >= W || y >= H) ? T.WATER : tiles[y * W + x];
-const set = (x, y, v) => { if (x >= 0 && y >= 0 && x < W && y < H) tiles[y * W + x] = v; };
-const isTown = (x, y) => Math.abs(x - CX) <= 10 && Math.abs(y - CY) <= 10;
-const inCave = (x, y) => x > CX + 28 && y > CY + 28;
-const inDesert = (x, y) => x > CX + 28 && y < CY - 28;
+const REGIONS = D.REGIONS, NR = REGIONS.length, TW = W * NR;
+const tiles = new Uint8Array(TW * H);
+const get = (x, y) => (x < 0 || y < 0 || x >= TW || y >= H) ? T.WATER : tiles[y * TW + x];
+const set = (x, y, v) => { if (x >= 0 && y >= 0 && x < TW && y < H) tiles[y * TW + x] = v; };
+const regionOf = x => Math.max(0, Math.min(NR - 1, Math.floor(x / W)));
+const townOf = r => ({ x: r * W + CX, y: CY });
+const isTown = (x, y) => Math.abs(x - regionOf(x) * W - CX) <= 10 && Math.abs(y - CY) <= 10;
+const inCave = (x, y) => { const r = regionOf(x), lx = x - r * W; return REGIONS[r].biome === 'green' && lx > CX + 28 && y > CY + 28; };
+const inDesert = (x, y) => { const r = regionOf(x), lx = x - r * W; return REGIONS[r].biome === 'green' && lx > CX + 28 && y < CY - 28; };
+const BASE = { green: T.GRASS, island: T.GRASS, snow: T.SNOW, dark: T.CAVE };
 
-function genMap() {
-  const n1 = noise(10), n2 = noise(4), n3 = noise(3);
+function genRegion(r) {
+  const reg = REGIONS[r], X0 = r * W, rnd = r === 0 ? R : rng(1337 + r * 7919), base = BASE[reg.biome];
+  const lget = (x, y) => (x < 0 || y < 0 || x >= W || y >= H) ? T.WATER : tiles[y * TW + X0 + x];
+  const lset = (x, y, v) => { if (x >= 0 && y >= 0 && x < W && y < H) tiles[y * TW + X0 + x] = v; };
+  const n1 = noise(10, rnd), n2 = noise(4, rnd), n3 = noise(3, rnd);
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-    let t = T.GRASS; const v = n1(x, y) * 0.75 + n3(x, y) * 0.25;
+    let t = base; const v = n1(x, y) * 0.75 + n3(x, y) * 0.25;
     const dTown = Math.max(Math.abs(x - CX), Math.abs(y - CY));
-    if (inDesert(x, y)) t = R() < 0.035 ? T.ROCK : T.SAND;
-    else if (v < 0.3) t = T.WATER;
-    else if (v < 0.34) t = T.SAND;
-    else if (n2(x, y) > (dTown < 35 ? 0.68 : 0.6)) t = T.TREE;
-    else if (R() < 0.03) t = T.FLOWER;
+    if (reg.biome === 'green') {
+      if (inDesert(X0 + x, y)) t = rnd() < 0.035 ? T.ROCK : T.SAND;
+      else if (v < 0.3) t = T.WATER;
+      else if (v < 0.34) t = T.SAND;
+      else if (n2(x, y) > (dTown < 35 ? 0.68 : 0.6)) t = T.TREE;
+      else if (rnd() < 0.03) t = T.FLOWER;
+    } else if (reg.biome === 'island') {
+      const edge = Math.min(x, y, W - 1 - x, H - 1 - y);          // ilha: mais água perto das bordas
+      const vv = v - Math.max(0, (22 - edge) / 22) * 0.35;
+      if (vv < 0.33) t = T.WATER; else if (vv < 0.4) t = T.SAND;
+      else if (n2(x, y) > (dTown < 30 ? 0.66 : 0.56)) t = T.TREE;
+      else if (rnd() < 0.05) t = T.FLOWER;
+    } else if (reg.biome === 'snow') {
+      if (v < 0.27) t = T.WATER;
+      else if (n2(x, y) > (dTown < 30 ? 0.7 : 0.645)) t = T.TREE;
+      else if (rnd() < 0.035) t = T.SNOWROCK;
+    } else {
+      if (v < 0.24) t = T.WATER;
+      else if (n2(x, y) > (dTown < 30 ? 0.7 : 0.63)) t = T.CAVEWALL;
+      else if (n2(x, y) > 0.56 && rnd() < 0.2) t = T.TREE;
+    }
     if (x < 3 || y < 3 || x >= W - 3 || y >= H - 3) t = T.WATER;
-    tiles[y * W + x] = t;
+    lset(x, y, t);
   }
-  // caverna (sudeste)
-  for (let y = CY + 29; y < H - 3; y++) for (let x = CX + 29; x < W - 3; x++) set(x, y, T.CAVEWALL);
-  let px = CX + 31, py = CY + 40;
-  for (let i = 0; i < 6500; i++) {
-    for (let dy = 0; dy < 2; dy++) for (let dx = 0; dx < 2; dx++) { const xx = px + dx, yy = py + dy; if (xx > CX + 29 && yy > CY + 29 && xx < W - 4 && yy < H - 4) set(xx, yy, T.CAVE); }
-    const d = R() * 4 | 0; px += [0, 1, 0, -1][d]; py += [1, 0, -1, 0][d];
-    px = Math.max(CX + 30, Math.min(W - 6, px)); py = Math.max(CY + 30, Math.min(H - 6, py));
+  if (reg.biome === 'green') {   // caverna (sudeste) só no Vale de Aurora
+    for (let y = CY + 29; y < H - 3; y++) for (let x = CX + 29; x < W - 3; x++) lset(x, y, T.CAVEWALL);
+    let px = CX + 31, py = CY + 40;
+    for (let i = 0; i < 6500; i++) {
+      for (let dy = 0; dy < 2; dy++) for (let dx = 0; dx < 2; dx++) { const xx = px + dx, yy = py + dy; if (xx > CX + 29 && yy > CY + 29 && xx < W - 4 && yy < H - 4) lset(xx, yy, T.CAVE); }
+      const d = rnd() * 4 | 0; px += [0, 1, 0, -1][d]; py += [1, 0, -1, 0][d];
+      px = Math.max(CX + 30, Math.min(W - 6, px)); py = Math.max(CY + 30, Math.min(H - 6, py));
+    }
   }
-  // estradas
-  const road = (x, y) => { const t = get(x, y); if (t === T.WATER) set(x, y, T.BRIDGE); else if (t !== T.CAVE) set(x, y, inCave(x, y) ? T.CAVE : T.PATH); };
+  const road = (x, y) => { const t = lget(x, y); if (t === T.WATER) lset(x, y, T.BRIDGE); else if (t !== T.CAVE || reg.biome === 'dark') lset(x, y, inCave(X0 + x, y) ? T.CAVE : T.PATH); };
   const road2 = (x, y) => { road(x, y); road(x + 1, y); };
   const road2v = (x, y) => { road(x, y); road(x, y + 1); };
   for (let y = 4; y < CY - 10; y++) road2(CX, y);
   for (let y = CY + 11; y < H - 4; y++) road2(CX, y);
   for (let x = 4; x < CX - 10; x++) road2v(x, CY);
   for (let x = CX + 11; x < W - 4; x++) road2v(x, CY);
-  for (let x = CX; x <= CX + 32; x++) road2v(x, CY + 40);
-  for (let y = CY - 42; y < CY; y++) road2(CX + 40, y);
-  // limpar arredores da cidade
-  for (let y = CY - 13; y <= CY + 13; y++) for (let x = CX - 13; x <= CX + 13; x++) if (BLOCK[get(x, y)]) set(x, y, T.GRASS);
-  // cidade murada
+  if (reg.biome === 'green') {
+    for (let x = CX; x <= CX + 32; x++) road2v(x, CY + 40);
+    for (let y = CY - 42; y < CY; y++) road2(CX + 40, y);
+  }
+  for (let y = CY - 13; y <= CY + 13; y++) for (let x = CX - 13; x <= CX + 13; x++) if (BLOCK[lget(x, y)] || lget(x, y) === T.WATER) lset(x, y, base);
   for (let y = CY - 10; y <= CY + 10; y++) for (let x = CX - 10; x <= CX + 10; x++) {
     const edge = Math.abs(x - CX) === 10 || Math.abs(y - CY) === 10;
-    set(x, y, edge ? T.WALL : T.FLOOR);
+    lset(x, y, edge ? T.WALL : T.FLOOR);
   }
-  for (let k = -1; k <= 2; k++) { set(CX + k, CY - 10, T.FLOOR); set(CX + k, CY + 10, T.FLOOR); set(CX - 10, CY + k, T.FLOOR); set(CX + 10, CY + k, T.FLOOR); }
-  // pontes só onde há água por perto (o resto vira estrada)
-  for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) if (get(x, y) === T.BRIDGE) {
-    let wet = false; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (get(x + dx, y + dy) === T.WATER) wet = true;
-    if (!wet) set(x, y, T.PATH);
+  for (let k = -1; k <= 2; k++) { lset(CX + k, CY - 10, T.FLOOR); lset(CX + k, CY + 10, T.FLOOR); lset(CX - 10, CY + k, T.FLOOR); lset(CX + 10, CY + k, T.FLOOR); }
+  for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) if (lget(x, y) === T.BRIDGE) {
+    let wet = false; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (lget(x + dx, y + dy) === T.WATER) wet = true;
+    if (!wet) lset(x, y, T.PATH);
   }
-  // fonte
-  set(CX, CY, T.WATER); set(CX + 1, CY, T.WATER); set(CX, CY + 1, T.WATER); set(CX + 1, CY + 1, T.WATER);
-  // casinhas decorativas
-  const hut = (x0, y0) => { for (let y = y0; y < y0 + 3; y++) for (let x = x0; x < x0 + 4; x++) set(x, y, T.WALL); };
+  lset(CX, CY, T.WATER); lset(CX + 1, CY, T.WATER); lset(CX, CY + 1, T.WATER); lset(CX + 1, CY + 1, T.WATER);
+  const hut = (x0, y0) => { for (let y = y0; y < y0 + 3; y++) for (let x = x0; x < x0 + 4; x++) lset(x, y, T.WALL); };
   hut(CX - 8, CY - 8); hut(CX + 5, CY - 8); hut(CX - 8, CY + 5); hut(CX + 5, CY + 5);
+  return rnd;
 }
-genMap();
-const SPAWN = { x: CX, y: CY + 4 };
+const regionRng = REGIONS.map((_, r) => genRegion(r));
+const SPAWN = { x: CX, y: CY + 4 };                       // região 0 (jogadores novos)
+const spawnOf = r => ({ x: r * W + CX, y: CY + 4 });
+// tiles de cada região já codificados para enviar ao cliente
+const regionTiles = REGIONS.map((_, r) => {
+  const b = Buffer.alloc(W * H);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) b[y * W + x] = tiles[y * TW + r * W + x];
+  return b.toString('base64');
+});
 
 // ------------------------------------------------------------------ ENTIDADES
 let nextId = 1;
@@ -93,16 +124,16 @@ const cheb = (a, b) => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
 const DX = [0, -1, 0, 1], DY = [1, 0, -1, 0]; // 0 baixo,1 esquerda,2 cima,3 direita
 
 function place(e, x, y) {
-  if (e.x != null && occ.get(e.y * W + e.x) === e) occ.delete(e.y * W + e.x);
-  e.x = x; e.y = y; occ.set(y * W + x, e);
+  if (e.x != null && occ.get(e.y * TW + e.x) === e) occ.delete(e.y * TW + e.x);
+  e.x = x; e.y = y; occ.set(y * TW + x, e);
 }
-function unplace(e) { if (occ.get(e.y * W + e.x) === e) occ.delete(e.y * W + e.x); }
+function unplace(e) { if (occ.get(e.y * TW + e.x) === e) occ.delete(e.y * TW + e.x); }
 function walkable(x, y, forMon) {
   if (BLOCK[get(x, y)]) return false;
   if (forMon && isTown(x, y)) return false;
   return true;
 }
-function free(x, y, forMon) { return walkable(x, y, forMon) && !occ.has(y * W + x); }
+function free(x, y, forMon) { return walkable(x, y, forMon) && !occ.has(y * TW + x); }
 function findFree(x, y) {
   for (let r = 0; r < 8; r++) for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) if (free(x + dx, y + dy)) return { x: x + dx, y: y + dy };
   return { x, y };
@@ -111,25 +142,34 @@ function findFree(x, y) {
 // NPCs
 for (const n of NPCS) {
   const e = { id: nextId++, kind: 'n', npc: n, name: n.name, look: n.look, dir: 0 };
-  place(e, CX + n.dx, CY + n.dy); ents.set(e.id, e);
+  const c = townOf(n.r || 0); place(e, c.x + n.dx, c.y + n.dy); ents.set(e.id, e);
 }
 
 // Pontos de spawn
 function zoneOf(x, y) {
   if (isTown(x, y)) return null;
-  if (inCave(x, y)) return 'cave';
-  if (inDesert(x, y)) return 'desert';
-  const d = Math.max(Math.abs(x - CX), Math.abs(y - CY));
-  if (d < 16) return null; if (d < 38) return 'meadow'; if (d < 58) return 'forest'; return 'wild';
+  const r = regionOf(x), reg = REGIONS[r], lx = x - r * W;
+  const d = Math.max(Math.abs(lx - CX), Math.abs(y - CY));
+  if (d < 16) return null;
+  if (reg.biome === 'green') {
+    if (inCave(x, y)) return 'cave';
+    if (inDesert(x, y)) return 'desert';
+    if (d < 38) return 'meadow'; if (d < 58) return 'forest'; return 'wild';
+  }
+  return d < 45 ? reg.zones[0] : reg.zones[1];
 }
 const spawns = [];
-for (let y = 3; y < H - 3; y++) for (let x = 3; x < W - 3; x++) {
-  const z = zoneOf(x, y); if (!z || !walkable(x, y, true)) continue;
-  const t = get(x, y); if (t === T.PATH || t === T.BRIDGE) continue;
-  if (R() > 1 / 55) continue;
-  const list = ZONES[z]; const tot = list.reduce((s, a) => s + a[1], 0); let r = R() * tot, type = list[0][0];
-  for (const [m, w] of list) { r -= w; if (r <= 0) { type = m; break; } }
-  spawns.push({ type, x, y, ent: null, at: 0 });
+for (let rg = 0; rg < NR; rg++) {
+  const RND = regionRng[rg];
+  for (let y = 3; y < H - 3; y++) for (let lx = 3; lx < W - 3; lx++) {
+    const x = rg * W + lx;
+    const z = zoneOf(x, y); if (!z || !walkable(x, y, true)) continue;
+    const t = get(x, y); if (t === T.PATH || t === T.BRIDGE) continue;
+    if (RND() > 1 / 55) continue;
+    const list = ZONES[z]; const tot = list.reduce((s, a) => s + a[1], 0); let r = RND() * tot, type = list[0][0];
+    for (const [m, w] of list) { r -= w; if (r <= 0) { type = m; break; } }
+    spawns.push({ type, x, y, ent: null, at: 0 });
+  }
 }
 function spawnMon(s) {
   if (!free(s.x, s.y, true)) { s.at = Date.now() + 5000; return; }
@@ -138,7 +178,7 @@ function spawnMon(s) {
   place(e, s.x, s.y); ents.set(e.id, e); s.ent = e;
 }
 spawns.forEach(spawnMon);
-console.log(`Mapa ${W}x${H} gerado, ${spawns.length} monstros.`);
+console.log(`${NR} regiões ${W}x${H} geradas, ${spawns.length} monstros.`);
 
 // ------------------------------------------------------------------ PERSISTÊNCIA
 let db = {};
@@ -210,7 +250,7 @@ function playerDie(p, killer) {
   p.xp -= lost;
   while (p.level > 1 && p.xp < xpFor(p.level)) p.level--;
   p.hp = maxHp(p); p.mp = maxMp(p); p.target = null; p.path = null; p.berserk = 0;
-  const pos = findFree(SPAWN.x, SPAWN.y); place(p, pos.x, pos.y);
+  const sp = spawnOf(regionOf(p.x)), pos = findFree(sp.x, sp.y); place(p, pos.x, pos.y);
   msg(p, `Você morreu${killer ? ' para ' + killer : ''}! Perdeu ${lost} de experiência.`, '#f55');
   send(p, { t: 'dead', by: killer || '' });
   p.dirty = true;
@@ -230,7 +270,7 @@ function damage(t, dmg, src, color) {
   addFx(t.x, t.y, { k: 'dmg', v: dmg, c: color || (t.kind === 'p' ? '#f33' : '#ff5050') });
   // O impacto é transmitido para todos que enxergam o combate. O dano segue
   // calculado exclusivamente no servidor; isto é apenas retorno visual.
-  addFx(t.x, t.y, { k: 'hit', c: color || (t.kind === 'p' ? '#ff6b6b' : '#ffd1a1') });
+  addFx(t.x, t.y, { k: 'hit', id: t.id, c: color || (t.kind === 'p' ? '#ff6b6b' : '#ffd1a1') });
   addFx(t.x, t.y, { k: 'blood' });
   if (t.kind === 'm') {
     if (src && src.kind === 'p') { t.dmgBy.set(src.id, (t.dmgBy.get(src.id) || 0) + dmg); if (!t.target) t.target = src.id; }
@@ -244,7 +284,7 @@ function damage(t, dmg, src, color) {
   }
 }
 function attack(a, t, mult, color) {
-  a.attackUntil = Date.now() + 240;
+  a.attackUntil = Date.now() + 300;
   addFx(a.x, a.y, { k: 'swing', tx: t.x, ty: t.y, c: color || (a.kind === 'p' ? '#ffe3a3' : '#ff9a72') });
   let atk = a.kind === 'p' ? playerAtk(a) : MON[a.type].atk;
   if (a.kind === 'p' && a.berserk > Date.now()) atk *= 1.5;
@@ -285,19 +325,19 @@ function tryMove(e, d, forMon) {
   place(e, nx, ny); return true;
 }
 function bfsStep(from, tx, ty, maxNodes = 2500, stopAdj = false) {
-  const start = from.y * W + from.x, goal = ty * W + tx;
+  const start = from.y * TW + from.x, goal = ty * TW + tx;
   const prev = new Map([[start, -1]]); const q = [start]; let qi = 0;
   while (qi < q.length && prev.size < maxNodes) {
-    const cur = q[qi++]; const cx = cur % W, cy = (cur / W) | 0;
+    const cur = q[qi++]; const cx = cur % TW, cy = (cur / TW) | 0;
     if (cur === goal || (stopAdj && Math.max(Math.abs(cx - tx), Math.abs(cy - ty)) <= 1)) {
       let c = cur, p = prev.get(c); if (p === -1) return -1;
       while (prev.get(p) !== -1) { c = p; p = prev.get(c); }
-      const nx = c % W, ny = (c / W) | 0;
+      const nx = c % TW, ny = (c / TW) | 0;
       for (let d = 0; d < 4; d++) if (from.x + DX[d] === nx && from.y + DY[d] === ny) return d;
       return -1;
     }
     for (let d = 0; d < 4; d++) {
-      const nx = cx + DX[d], ny = cy + DY[d], k = ny * W + nx;
+      const nx = cx + DX[d], ny = cy + DY[d], k = ny * TW + nx;
       if (prev.has(k)) continue;
       if (k !== goal && !free(nx, ny)) continue;
       if (k === goal && BLOCK[get(nx, ny)]) continue;
@@ -359,7 +399,7 @@ function playerTick(p, now) {
   const range = VOC[p.voc].range;
   if (!t && !isTown(p.x, p.y)) {
     for (const [dx, dy] of [[0, 1], [-1, 0], [0, -1], [1, 0], [1, 1], [-1, 1], [1, -1], [-1, -1]]) {
-      const e = occ.get((p.y + dy) * W + p.x + dx);
+      const e = occ.get((p.y + dy) * TW + p.x + dx);
       if (e && e.kind === 'm' && !MON[e.type].passive) { p.target = e.id; t = e; break; }
     }
   }
@@ -367,7 +407,7 @@ function playerTick(p, now) {
     if (p.walkDir >= 0) {
       p.path = null;
       if (tryMove(p, p.walkDir)) p.nextMove = now + stepTime(p);
-      else { p.dir = p.walkDir; const e = occ.get((p.y + DY[p.walkDir]) * W + p.x + DX[p.walkDir]); if (e && e.kind === 'm' && !isTown(p.x, p.y)) { p.target = e.id; t = e; } }
+      else { p.dir = p.walkDir; const e = occ.get((p.y + DY[p.walkDir]) * TW + p.x + DX[p.walkDir]); if (e && e.kind === 'm' && !isTown(p.x, p.y)) { p.target = e.id; t = e; } }
     }
     else if (p.goto) {
       if (p.x === p.goto.x && p.y === p.goto.y) p.goto = null;
@@ -417,7 +457,7 @@ function castSpell(p, id) {
     for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
       if (!dx && !dy) continue; if (dx * dx + dy * dy > r * r + 1) continue;
       addFx(p.x + dx, p.y + dy, { k: 'area', fx: sp.fx });
-      const e = occ.get((p.y + dy) * W + p.x + dx);
+      const e = occ.get((p.y + dy) * TW + p.x + dx);
       if (e && e !== p && (e.kind === 'm' || (e.kind === 'p' && p.target === e.id)) && canHit(p, e)) attack(p, e, sp.mult);
     }
   } else if (sp.type === 'buff') {
@@ -465,13 +505,33 @@ function talkNpc(p, e) {
       text = `Excelente trabalho! Aqui está sua recompensa: ${tk.gold} ouro e ${ITEMS[tk.item].name}. Fale comigo de novo para outra missão.`;
     } else text = `Você ainda precisa derrotar ${p.task.n - p.task.k} ${MON[p.task.mon].name}(s). Não desista!`;
     send(p, { t: 'dialog', name: n.name, text });
+  } else if (n.travel) {
+    const here = regionOf(p.x);
+    send(p, { t: 'travel', name: n.name, here, gold: p.gold, level: p.level });
   } else if (n.talk) {
     send(p, { t: 'dialog', name: n.name, text: n.talk[Math.random() * n.talk.length | 0] });
   }
 }
 
 // ------------------------------------------------------------------ REDE
-const tilesB64 = Buffer.from(tiles).toString('base64');
+function sendRegion(p, first) {
+  const r = regionOf(p.x);
+  p.region = r;
+  send(p, { t: first ? 'welcome' : 'region', id: p.id, r, ox: r * W, W, H, tiles: regionTiles[r], xpRate: XP_RATE });
+}
+function travel(p, to) {
+  const reg = REGIONS[to], from = regionOf(p.x);
+  if (!reg || to === from) return;
+  if (!nearNpc(p, 'portal')) return msg(p, 'Fale com o Guardião do Portal na cidade para viajar.', '#f88');
+  if (p.level < reg.lvl) return msg(p, `Você precisa do nível ${reg.lvl} para ir a ${reg.name}.`, '#f88');
+  const cost = to === 0 ? 50 : reg.cost;
+  if (p.gold < cost) return msg(p, `A viagem custa ${cost} ouro.`, '#f88');
+  p.gold -= cost; p.target = null; p.goto = null; p.walkDir = -1; p.pendingNpc = null; p.dirty = true;
+  const sp = spawnOf(to), pos = findFree(sp.x, sp.y); place(p, pos.x, pos.y);
+  sendRegion(p, false);
+  addFx(p.x, p.y, { k: 'level' });
+  msg(p, `Você chegou em ${reg.town} — ${reg.name}.`, '#ffd84a');
+}
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'application/javascript; charset=utf-8', '.css': 'text/css', '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json', '.jpg': 'image/jpeg', '.webmanifest': 'application/manifest+json', '.ttf': 'font/ttf', '.svg': 'image/svg+xml' };
 const server = http.createServer((req, res) => {
   let u = decodeURIComponent(req.url.split('?')[0]); if (u === '/') u = '/index.html';
@@ -480,7 +540,7 @@ const server = http.createServer((req, res) => {
   if (!f.startsWith(path.join(__dirname, 'public'))) { res.writeHead(403); return res.end(); }
   fs.readFile(f, (err, data) => {
     if (err) { res.writeHead(404); return res.end('404'); }
-    res.writeHead(200, { 'Content-Type': MIME[path.extname(f)] || 'application/octet-stream', 'Cache-Control': u.startsWith('/assets/') ? 'public, max-age=86400' : 'no-cache' }); res.end(data);
+    res.writeHead(200, { 'Content-Type': MIME[path.extname(f)] || 'application/octet-stream', 'Cache-Control': 'no-cache, max-age=0, must-revalidate' }); res.end(data);
   });
 });
 const wss = new WebSocketServer({ server });
@@ -508,9 +568,9 @@ wss.on('connection', ws => {
       for (const o of players.values()) if (o.name.toLowerCase() === key) { send(o, { t: 'err', m: 'Conectado em outro lugar.' }); o.ws.close(); leave(o); }
       p = Object.assign({}, data, { id: nextId++, kind: 'p', ws, dir: 0, walkDir: -1, nextMove: 0, nextAtk: 0, lastRegen: Date.now(), cds: {}, fx: [], dirty: true, target: null, skull: 0, berserk: 0 });
       p.stats = Object.assign({ str: 0, mag: 0, dfs: 0, vit: 0 }, p.stats); p.app = cleanApp(p.app);
-      const pos = (walkable(p.x, p.y) && !isTown(p.x, p.y)) || isTown(p.x, p.y) ? findFree(p.x, p.y) : findFree(SPAWN.x, SPAWN.y);
+      const pos = p.x >= 0 && p.x < TW && walkable(p.x, p.y) ? findFree(p.x, p.y) : findFree(SPAWN.x, SPAWN.y);
       place(p, pos.x, pos.y); ents.set(p.id, p); players.set(p.id, p); persist(p);
-      ws.send(JSON.stringify({ t: 'welcome', id: p.id, W, H, tiles: tilesB64, xpRate: XP_RATE }));
+      sendRegion(p, true);
       msg(p, `Bem-vindo(a) a As Aventuras do Piper, ${p.name}! Fale com o Mestre Aldo (no centro da cidade) para missões.`, '#ffd84a');
       broadcast({ t: 'msg', m: `${p.name} entrou no jogo.`, c: '#8c8' });
       return;
@@ -532,6 +592,7 @@ wss.on('connection', ws => {
         if (best) p.target = best.id; break;
       }
       case 'spell': castSpell(p, String(m.s)); break;
+      case 'travel': travel(p, m.to | 0); break;
       case 'use': useItem(p, m.slot | 0); break;
       case 'quick': { const ids = m.k === 'hp' ? ['pot_hp2', 'pot_hp'] : ['pot_mp2', 'pot_mp'];
         const want = m.k === 'hp' ? (maxHp(p) - p.hp > 200 ? ids : ids.slice().reverse()) : (maxMp(p) - p.mp > 150 ? ids : ids.slice().reverse());
@@ -596,7 +657,7 @@ setInterval(() => {
       list.push([e.id, e.kind, e.x, e.y, e.dir, look, e.name, hpPct, e.kind === 'p' ? (e.skull > now ? 1 : 0) | (e.berserk > now ? 2 : 0) : 0, e.kind === 'p' ? e.level : 0, attackMs]);
     }
     const cds = {}; for (const k in p.cds) if (p.cds[k] > now) cds[k] = p.cds[k] - now;
-    const me = { x: p.x, y: p.y, hp: p.hp, mhp: maxHp(p), mp: p.mp, mmp: maxMp(p), lv: p.level, xp: p.xp, xpa: xpFor(p.level), xpb: xpFor(p.level + 1), gold: p.gold, tg: p.target, cds, voc: p.voc, town: isTown(p.x, p.y), berserk: Math.max(0, p.berserk - now) };
+    const me = { x: p.x, y: p.y, hp: p.hp, mhp: maxHp(p), mp: p.mp, mmp: maxMp(p), lv: p.level, xp: p.xp, xpa: xpFor(p.level), xpb: xpFor(p.level + 1), gold: p.gold, tg: p.target, cds, voc: p.voc, town: isTown(p.x, p.y), r: regionOf(p.x), berserk: Math.max(0, p.berserk - now) };
     if (p.dirty) { Object.assign(me, { inv: p.inv, eq: p.eq, st: p.stats, pts: p.points, atk: Math.round(playerAtk(p)), def: Math.round(playerDef(p)), task: p.task, name: p.name }); p.dirty = false; }
     send(p, { t: 's', me, e: list, fx: p.fx });
     p.fx = [];
@@ -604,6 +665,7 @@ setInterval(() => {
 }, TICK);
 
 setInterval(() => { for (const p of players.values()) persist(p); saveDb(); }, 30000);
-process.on('SIGINT', () => { for (const p of players.values()) persist(p); saveDb(); process.exit(0); });
+function shutdown() { for (const p of players.values()) persist(p); saveDb(); process.exit(0); }
+process.on('SIGINT', shutdown); process.on('SIGTERM', shutdown);
 
-server.listen(PORT, () => console.log(`As Aventuras do Piper rodando em http://localhost:${PORT}`));
+server.listen(PORT, '0.0.0.0', () => console.log(`As Aventuras do Piper rodando em http://localhost:${PORT}`));

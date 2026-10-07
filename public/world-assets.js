@@ -1,13 +1,13 @@
 // Biblioteca de cenário em PNG — carregada antes do mundo para que os objetos
 // do mapa possam usar arte final, mantendo um fallback no renderer.
 const WORLD = (function () {
+  // Versões leves (já no tamanho em que aparecem na tela). Os PNGs originais
+  // gigantes continuam na pasta, mas não são mais baixados pelo jogo.
   const files = {
-    oak: 'assets/world/oak-guardian.png',
-    hub: 'assets/world/town-hub.png',
-    rock: 'assets/world/mossy-crystals.png',
-    grass: 'assets/world/grass-texture.png',
-    water: 'assets/world/water-texture.png',
-    bridge: 'assets/world/bridge-texture.png'
+    oak: 'assets/world/oak-sm.png',
+    hub: 'assets/world/hub-sm.png',
+    rock: 'assets/world/rock-sm.png',
+    grass: 'assets/world/grass-seamless.jpg'
   };
   const images = {};
   let ready = false;

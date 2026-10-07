@@ -4,6 +4,7 @@
   const $ = id => document.getElementById(id);
   const cv = $('view'), ctx = cv.getContext('2d');
   let ws, myId = 0, tiles = null, MW = 160, MH = 160, CX = 80, CY = 80, inGame = false;
+  let RX = 0, REG = D.REGIONS[0];   // região carregada (x inicial no mundo) e seus dados
   let me = {}, inv = [], eq = {}, stats = {}, task = null, myLook = '';
   const ents = new Map(); let fxs = []; const speech = new Map();
   let miniImg = null, shopData = null, shopTab = 'buy', selSpell = 0, selItem = null;
@@ -16,8 +17,9 @@
   // Personagens e cenário carregam juntos: nada do mapa aparece com arte
   // temporária, mas o renderer ainda possui fallback para conexões instáveis.
   Promise.all([
-    CHARS.load(p => $('loadbar').firstElementChild.style.width = Math.round(p * 82) + '%'),
-    WORLD.load(p => $('loadbar').firstElementChild.style.width = (82 + Math.round(p * 18)) + '%')
+    CHARS.load(p => $('loadbar').firstElementChild.style.width = Math.round(p * 55) + '%'),
+    WORLD.load(p => $('loadbar').firstElementChild.style.width = (55 + Math.round(p * 20)) + '%'),
+    ENEMIES.load(p => $('loadbar').firstElementChild.style.width = (75 + Math.round(p * 25)) + '%')
   ]).then(() => { loaded = true; onLoaded(); });
   const timers = [];
   timers.push(setTimeout(() => $('sA').classList.add('on'), 300));
@@ -74,7 +76,8 @@
     document.querySelectorAll('.voc').forEach(el => {
       el.classList.toggle('sel', el.dataset.v === voc);
       const g = el.querySelector('canvas').getContext('2d'); g.clearRect(0, 0, 88, 88);
-      g.drawImage(CHARS.portrait(CHARS.lookOf(el.dataset.v, starter(el.dataset.v), app), 88), 0, 0);
+      const look = CHARS.lookOf(el.dataset.v, starter(el.dataset.v), app);
+      g.drawImage(CHARS.portrait(look, 88), 0, 0);
     });
   }
   let pT = 0;
@@ -84,7 +87,8 @@
     if (pAuto && t - pT > 2200) { pT = t; pDir = [1, 2, 3, 0][pDir]; }
     const frame = pWalk ? [1, 0, 2, 0][Math.floor(t / 170) % 4] : 0;
     const c = $('prevCv'), g = c.getContext('2d'); g.clearRect(0, 0, c.width, c.height); g.imageSmoothingQuality = 'high';
-    g.drawImage(CHARS.sprite(CHARS.lookOf(voc, starter(voc), app), pDir, frame), 0, 0, c.width, c.height);
+    const look = CHARS.lookOf(voc, starter(voc), app);
+    g.drawImage(CHARS.sprite(look, pDir, frame), 0, 0, c.width, c.height);
   }
 
   // ======================================================== CONEXÃO
@@ -114,11 +118,11 @@
     switch (m.t) {
       case 'err': if (!inGame) { errEl.textContent = m.m; connecting = false; } else addLog(m.m, '#ff8a8a'); break;
       case 'welcome': {
-        myId = m.id; MW = m.W; MH = m.H; CX = MW >> 1; CY = MH >> 1;
-        const bin = atob(m.tiles); tiles = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) tiles[i] = bin.charCodeAt(i);
-        buildMini(); inGame = true; connecting = false; ents.clear(); fxs = []; $('feed').innerHTML = ''; $('chatLog').innerHTML = '';
+        myId = m.id; loadRegion(m); inGame = true; connecting = false; ents.clear(); fxs = []; $('feed').innerHTML = ''; $('chatLog').innerHTML = '';
         show('title', false); show('game', true); resize(); break;
       }
+      case 'region': closeModals(); loadRegion(m); break;
+      case 'travel': openMap('world', m); break;
       case 's': onState(m); break;
       case 'msg': addLog(m.m, m.c); break;
       case 'chat': addLog(`${m.name} [${m.lv}]: ${m.m}`, '#ffe14a'); speech.set(m.id, { text: m.m, t0: performance.now() }); break;
@@ -152,10 +156,16 @@
       if (attackMs) e.attackUntil = now + attackMs;
       e.dur = moveDur(e);
       if (dir === 1) e.faceLeft = true; else if (dir === 3) e.faceLeft = false;
-      if (id === myId && look !== myLook) { myLook = look; const pc = $('portrait'); const g = pc.getContext('2d'); g.clearRect(0, 0, 116, 116); g.drawImage(CHARS.portrait(look, 116), 0, 0); }
+      if (id === myId && look !== myLook) {
+        myLook = look; const pc = $('portrait'); const g = pc.getContext('2d'); g.clearRect(0, 0, 116, 116);
+        g.drawImage(CHARS.portrait(look, 116), 0, 0, 116, 116);
+      }
     }
     for (const id of ents.keys()) if (!seen.has(id)) ents.delete(id);
-    for (const f of m.fx) { f.t0 = now; fxs.push(f); }
+    for (const f of m.fx) {
+      f.t0 = now; fxs.push(f);
+      if (f.k === 'hit' && f.id) { const target = ents.get(f.id); if (target) target.hitUntil = now + 170; }
+    }
     if (m.me.inv) renderPanels();
     updateHud();
   }
@@ -165,9 +175,16 @@
   }
 
   // ======================================================== MAPA
-  const tileAt = (x, y) => (x < 0 || y < 0 || x >= MW || y >= MH) ? T.WATER : tiles[y * MW + x];
-  const inCave = (x, y) => x > CX + 28 && y > CY + 28;
-  const MINI_COL = ['#4b8d3b', '#2a5f2a', '#2b5fae', '#d8c07c', '#8f877a', '#555555', '#3f3228', '#9b7b4f', '#8a8178', '#5c9f46', '#8b5e34', '#1a1410'];
+  const tileAt = (x, y) => { x -= RX; return (x < 0 || y < 0 || x >= MW || y >= MH) ? T.WATER : tiles[y * MW + x]; };
+  const inCave = (x, y) => REG.biome === 'green' && x > CX + 28 && y > CY + 28;
+  // Carrega SÓ a região onde o jogador está (as outras não pesam no celular)
+  function loadRegion(m) {
+    MW = m.W; MH = m.H; RX = m.ox || 0; CX = RX + (MW >> 1); CY = MH >> 1; REG = D.REGIONS[m.r] || D.REGIONS[0];
+    const bin = atob(m.tiles); tiles = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) tiles[i] = bin.charCodeAt(i);
+    buildMini(); ents.clear(); fxs = []; if (SPR.resetGround) SPR.resetGround();
+    const b = $('regionBanner'); if (b) { b.innerHTML = `<small>${REG.town}</small>${REG.name}`; b.classList.remove('on'); void b.offsetWidth; b.classList.add('on'); }
+  }
+  const MINI_COL = ['#4b8d3b', '#2a5f2a', '#2b5fae', '#d8c07c', '#8f877a', '#555555', '#3f3228', '#9b7b4f', '#8a8178', '#5c9f46', '#8b5e34', '#1a1410', '#e8eef5', '#9aa3ad'];
   function buildMini() {
     miniImg = SPR.mk(MW, MH); const g = miniImg.getContext('2d'); const id = g.createImageData(MW, MH);
     for (let i = 0; i < MW * MH; i++) { const c = parseInt(MINI_COL[tiles[i]].slice(1), 16); id.data.set([c >> 16, (c >> 8) & 255, c & 255, 255], i * 4); }
@@ -199,10 +216,7 @@
     ctx.setTransform(K, 0, 0, K, 0, 0); ctx.imageSmoothingEnabled = false;
     const x0 = Math.floor(camX) - 1, y0 = Math.floor(camY) - 1, x1 = x0 + Math.ceil(LWW / TS) + 2, y1 = y0 + Math.ceil(LHH / TS) + 3;
     const wf = Math.floor(now / 350) % 7;
-    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
-      const t = tileAt(x, y), v = SPR.hash(x, y, 9) * 4 | 0;
-      SPR.ground(ctx, t, x, y, x * TS + ox, y * TS + oy, v, wf, now, tileAt, ox, oy);
-    }
+    SPR.drawGround(ctx, x0, y0, x1, y1, ox, oy, now, tileAt, K);
     // Marco visual do hub: a construção fica sob personagens e objetos para
     // preservar a leitura de profundidade do mapa.
     if (WORLD.hub && CX >= x0 - 7 && CX <= x1 + 7 && CY >= y0 - 7 && CY <= y1 + 7) {
@@ -231,7 +245,7 @@
             ctx.drawImage(WORLD.oak, x * TS + ox + 16 - w / 2, y * TS + oy + TS - h, w, h);
           } else ctx.drawImage(SPR.treeObj(SPR.hash(x, y, 3) * 6 | 0), x * TS + ox - 8, y * TS + oy - 26);
         }
-        else if (t === T.ROCK) {
+        else if (t === T.ROCK || t === T.SNOWROCK) {
           if (WORLD.rock) ctx.drawImage(WORLD.rock, x * TS + ox - 4, y * TS + oy - 8, 40, 40);
           else ctx.drawImage(SPR.rockObj(0), x * TS + ox, y * TS + oy);
         }
@@ -246,8 +260,8 @@
     // nomes e barras
     ctx.textAlign = 'center';
     for (const e of ents.values()) {
-      const p = rpos(e, now), sx = p.x * TS + ox + 16, isC = typeof e.look === 'string' && e.look[0] === 'c';
-      const top = isC ? 20 : (e.look === 'dragon' || e.look === 'troll' || e.look === 'bear' ? 14 : 4);
+      const p = rpos(e, now), sx = p.x * TS + ox + 16, isC = e.kind === 'p' || (typeof e.look === 'string' && e.look[0] === 'c');
+      const top = isC ? 24 : (e.look === 'dragon' || e.look === 'troll' || e.look === 'bear' ? 14 : 4);
       const sy = p.y * TS + oy - top;
       const pct = e.hp / 100, hc = pct > 0.6 ? '#3fd35a' : pct > 0.3 ? '#f2c14e' : '#ef4444';
       const nc = e.kind === 'n' ? '#9fd8ff' : e.kind === 'p' ? ((e.flags & 1) ? '#ff6b6b' : '#ffffff') : hc;
@@ -267,36 +281,55 @@
     lines.push(cur); lines.forEach((l, i) => txt(l, x, y - (lines.length - 1 - i) * 13 * UI, c));
   }
   function drawEnt(e, p, now, ox, oy) {
-    let frame = 0; if (p.moving) frame = 1 + (e.walk % 2);
     const sx = p.x * TS + ox, sy = p.y * TS + oy;
     const attackLeft = Math.max(0, (e.attackUntil || 0) - now);
-    const attackStep = attackLeft ? Math.sin((1 - attackLeft / 240) * Math.PI) * 3.2 : 0;
+    let frame = 0;
+    if (attackLeft) frame = 2;
+    else if (p.moving) frame = e.kind === 'm' ? 1 + (Math.floor(now / 110 + e.id) % 2) : 1 + (e.walk % 2);
+    else if (e.kind === 'm' && Math.floor(now / 440 + e.id) % 5 === 0) frame = 1;
+    const attackStep = attackLeft ? Math.sin((1 - attackLeft / 300) * Math.PI) * (e.kind === 'p' ? 5.8 : 4.5) : 0;
     const dir = [[0, 1], [-1, 0], [0, -1], [1, 0]][e.dir] || [0, 0];
-    if (typeof e.look === 'string' && e.look[0] === 'c') {
+    const isPlayer = e.kind === 'p';
+    const characterLook = typeof e.look === 'string' && e.look[0] === 'c'
+      ? e.look
+      : ['c', isPlayer && e.id === myId && me.voc === 'wizard' ? 'wizard' : 'warrior', '', '', '', '', '0', 'curto', 'castanho', ''].join('|');
+    if (isPlayer || (typeof e.look === 'string' && e.look[0] === 'c')) {
       ctx.fillStyle = 'rgba(0,0,0,.3)'; ctx.beginPath(); ctx.ellipse(sx + 16, sy + 28.5, 10, 3.6, 0, 0, 7); ctx.fill();
       if (e.flags & 2) { ctx.fillStyle = 'rgba(255,80,20,.28)'; ctx.beginPath(); ctx.ellipse(sx + 16, sy + 22, 17, 12, 0, 0, 7); ctx.fill(); }
-      const img = CHARS.sprite(e.look, e.dir, frame);
-      const breathe = p.moving ? 0 : Math.sin(now / 420 + e.id) * 0.35;
+      const hero = isPlayer && CHARS.sprite(characterLook, e.dir, frame);
+      const img = hero || CHARS.sprite(characterLook, e.dir, frame);
+      const breathe = p.moving ? 0 : Math.sin(now / 420 + e.id) * .55;
+      const sway = p.moving ? 0 : Math.sin(now / 650 + e.id * 1.7) * .35;
+      const hurt = (e.hitUntil || 0) > now;
       ctx.save(); ctx.translate(dir[0] * attackStep, dir[1] * attackStep * .45);
       ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
-      ctx.drawImage(img, sx, sy + TS - 46.5 + breathe, 32, 48 - breathe);
+      if (hurt) ctx.globalAlpha = 0.6;
+      if (hero) ctx.drawImage(img, sx - 5 + sway, sy + TS - 63 + breathe, 42, 63 - breathe);
+      else ctx.drawImage(img, sx - 1 + sway, sy + TS - 50 + breathe, 34, 51 - breathe);
       ctx.restore(); ctx.imageSmoothingEnabled = false;
       return;
     }
-    if (e.kind === 'm' && !p.moving && Math.floor(now / 500 + e.id) % 4 === 0) frame = 1;
-    const img = SPR.entity(e.kind, e.look, e.dir, frame, e.faceLeft);
-    ctx.fillStyle = 'rgba(0,0,0,.28)'; ctx.beginPath(); ctx.ellipse(sx + 16, sy + 29, img.width > 32 ? 16 : 10, 4, 0, 0, 7); ctx.fill();
+    const enemySprite = e.kind === 'm' && ENEMIES.sprite(e.look, frame);
+    const img = enemySprite || SPR.entity(e.kind, e.look, e.dir, frame, e.faceLeft);
+    const elite = e.look === 'bear' || e.look === 'troll' || e.look === 'dragon';
+    const iw = enemySprite ? (e.look === 'dragon' ? 70 : elite ? 51 : 43) : img.width;
+    const ih = enemySprite ? (e.look === 'dragon' ? 70 : elite ? 51 : 43) : img.height;
+    const idleBob = enemySprite && !p.moving ? Math.sin(now / 300 + e.id) * .8 : 0;
+    ctx.fillStyle = 'rgba(0,0,0,.28)'; ctx.beginPath(); ctx.ellipse(sx + 16, sy + 29, iw > 40 ? 16 : 10, 4, 0, 0, 7); ctx.fill();
     ctx.save(); ctx.translate(dir[0] * attackStep, dir[1] * attackStep * .45);
-    ctx.drawImage(img, Math.round(sx + (TS - img.width) / 2), Math.round(sy + TS - img.height - 1));
+    if ((e.hitUntil || 0) > now) ctx.globalAlpha = 0.6;
+    ctx.imageSmoothingEnabled = !!enemySprite; ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(img, Math.round(sx + (TS - iw) / 2), Math.round(sy + TS - ih - 1 + idleBob), iw, ih);
     ctx.restore();
+    ctx.imageSmoothingEnabled = false;
   }
   function drawCorpse(f, sx, sy, age) {
     ctx.globalAlpha = age > 10000 ? 1 - (age - 10000) / 2000 : 1;
     ctx.fillStyle = '#6a0808'; ctx.beginPath(); ctx.ellipse(sx + 16, sy + 24, 12, 5, 0, 0, Math.PI * 2); ctx.fill();
     if (f.look !== 'player') {
       const img = SPR.entity('m', f.look, 0, 0, true);
-      ctx.save(); ctx.translate(sx + 16, sy + 20); ctx.rotate(Math.PI / 2); ctx.filter = 'grayscale(.6) brightness(.75)';
-      ctx.drawImage(img, -img.width / 2, -img.height / 2 - 2, img.width * 0.9, img.height * 0.9); ctx.restore(); ctx.filter = 'none';
+      ctx.save(); ctx.translate(sx + 16, sy + 20); ctx.rotate(Math.PI / 2); ctx.globalAlpha = 0.6;
+      ctx.drawImage(img, -img.width / 2, -img.height / 2 - 2, img.width * 0.9, img.height * 0.9); ctx.restore();
     } else { ctx.fillStyle = '#ddd'; ctx.fillRect(sx + 10, sy + 20, 12, 3); ctx.fillRect(sx + 13, sy + 16, 6, 6); }
     ctx.globalAlpha = 1;
   }
@@ -308,14 +341,15 @@
         if (age > 260) return false;
         const k = age / 260, dx = (f.tx ?? f.x) - f.x, dy = (f.ty ?? f.y) - f.y, ang = Math.atan2(dy, dx);
         ctx.save(); ctx.translate(sx + 16, sy + 15); ctx.rotate(ang - 1.15 + k * 2.3);
-        ctx.globalAlpha = 1 - k; ctx.strokeStyle = f.c || '#fff'; ctx.shadowColor = f.c || '#fff'; ctx.shadowBlur = 7;
-        ctx.lineWidth = 2.5; ctx.beginPath(); ctx.arc(0, 0, 13 + k * 4, -.55, .9); ctx.stroke();
+        ctx.globalAlpha = 1 - k; ctx.strokeStyle = f.c || '#fff'; ctx.shadowColor = f.c || '#fff'; ctx.shadowBlur = 10 * K;
+        ctx.lineWidth = 2.6 * K; ctx.beginPath(); ctx.arc(0, 0, 12 + k * 6, -.62, .98); ctx.stroke();
+        ctx.globalAlpha = (1 - k) * .45; ctx.lineWidth = 1.1 * K; ctx.beginPath(); ctx.arc(0, 0, 17 + k * 7, -.48, .75); ctx.stroke();
         ctx.restore(); return true;
       }
       case 'hit': {
         if (age > 280) return false;
         const k = age / 280, c = f.c || '#fff'; ctx.save(); ctx.translate(sx + 16, sy + 15); ctx.globalAlpha = 1 - k;
-        ctx.strokeStyle = c; ctx.shadowColor = c; ctx.shadowBlur = 6; ctx.lineWidth = 1.7;
+        ctx.strokeStyle = c; ctx.shadowColor = c; ctx.shadowBlur = 9 * K; ctx.lineWidth = 1.7 * K;
         for (let i = 0; i < 7; i++) { const a = i / 7 * Math.PI * 2 + .3; const r = 4 + k * 13; ctx.beginPath(); ctx.moveTo(Math.cos(a) * (r - 4), Math.sin(a) * (r - 4)); ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r); ctx.stroke(); }
         ctx.restore(); return true;
       }
@@ -325,7 +359,7 @@
         const dur = 260; if (age > dur) return false; const k = age / dur, px = (f.x + (f.tx - f.x) * k) * TS + ox + 16, py = (f.y + (f.ty - f.y) * k) * TS + oy + 10;
         const c = FXC[f.fx] || '#fff', prev = Math.max(0, k - .24), lx = (f.x + (f.tx - f.x) * prev) * TS + ox + 16, ly = (f.y + (f.ty - f.y) * prev) * TS + oy + 10;
         ctx.strokeStyle = c; ctx.globalAlpha = .55 * (1 - k); ctx.lineWidth = 2.4; ctx.beginPath(); ctx.moveTo(lx, ly); ctx.lineTo(px, py); ctx.stroke();
-        ctx.globalAlpha = 1; ctx.fillStyle = c; ctx.shadowColor = c; ctx.shadowBlur = 12 * K; ctx.beginPath(); ctx.arc(px, py, f.fx === 'arcane' ? 3.5 : 5.5, 0, 7); ctx.fill(); ctx.shadowBlur = 0; ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(px, py, 1.5, 0, 7); ctx.fill(); return true;
+        ctx.globalAlpha = 1; ctx.fillStyle = c; ctx.shadowColor = c; ctx.shadowBlur = 13 * K; ctx.beginPath(); ctx.arc(px, py, f.fx === 'arcane' ? 3.5 : 5.5, 0, 7); ctx.fill(); ctx.shadowBlur = 0; ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(px, py, 1.5, 0, 7); ctx.fill(); return true;
       }
       case 'area': {
         if (age > 550) return false; const a = 1 - age / 550;
@@ -348,7 +382,7 @@
   function drawMini(meE) {
     const c = $('mini'), g = c.getContext('2d'), S = 4, R = 32;
     g.imageSmoothingEnabled = false; g.fillStyle = '#000'; g.fillRect(0, 0, 260, 260);
-    g.drawImage(miniImg, meE.x - R, meE.y - R, R * 2, R * 2, 2, 2, 256, 256);
+    g.drawImage(miniImg, meE.x - RX - R, meE.y - R, R * 2, R * 2, 2, 2, 256, 256);
     for (const e of ents.values()) { if (e.id === myId) continue; g.fillStyle = e.kind === 'm' ? '#ff4d4d' : e.kind === 'n' ? '#4dd2ff' : '#fff'; g.fillRect(2 + (e.x - meE.x + R) * S, 2 + (e.y - meE.y + R) * S, 5, 5); }
     g.fillStyle = '#fff'; g.beginPath(); g.arc(130, 130, 5, 0, 7); g.fill(); g.strokeStyle = '#000'; g.lineWidth = 2; g.stroke();
   }
@@ -403,14 +437,86 @@
   $('potMp').addEventListener('pointerdown', e => { e.preventDefault(); send({ t: 'quick', k: 'mp' }); });
 
   // ======================================================== PAINÉIS
-  const modals = ['mPanel', 'mShop', 'mDialog', 'mChat'];
+  const modals = ['mPanel', 'mShop', 'mDialog', 'mChat', 'mMap'];
   const closeModals = () => modals.forEach(m => $(m).style.display = 'none');
   document.querySelectorAll('[data-close]').forEach(b => b.onclick = closeModals);
   modals.forEach(m => $(m).addEventListener('pointerdown', e => { if (e.target.id === m) closeModals(); }));
-  document.querySelectorAll('.ib').forEach(b => b.onclick = () => { const k = b.dataset.open; if (k === 'chat') { closeModals(); $('mChat').style.display = 'flex'; $('chatLog').scrollTop = 1e9; } else openPanel(k); });
+  document.querySelectorAll('.ib').forEach(b => b.onclick = () => { const k = b.dataset.open; if (k === 'map') return openMap('region'); if (k === 'chat') { closeModals(); $('mChat').style.display = 'flex'; $('chatLog').scrollTop = 1e9; } else openPanel(k); });
   $('portrait').onclick = () => openPanel('stats');
   document.querySelectorAll('.tabs2 [data-tab]').forEach(b => b.onclick = () => openPanel(b.dataset.tab));
   let curTab = 'inv';
+
+  // ======================================================== MAPA (região e mundo) + VIAGEM
+  let mapMode = 'region', travelInfo = null;
+  function openMap(mode, travel) {
+    closeModals(); mapMode = mode; travelInfo = travel || null;
+    $('mMap').style.display = 'flex'; drawMap();
+  }
+  $('mapTabR').onclick = () => { mapMode = 'region'; drawMap(); };
+  $('mapTabW').onclick = () => { mapMode = 'world'; drawMap(); };
+  function islandPath(g, cx, cy, rad, seed) {
+    g.beginPath();
+    for (let i = 0; i <= 40; i++) {
+      const a = i / 40 * Math.PI * 2, k = 1 + 0.18 * Math.sin(a * 3 + seed) + 0.1 * Math.sin(a * 5 + seed * 2.3);
+      const x = cx + Math.cos(a) * rad * k * 1.25, y = cy + Math.sin(a) * rad * k;
+      i ? g.lineTo(x, y) : g.moveTo(x, y);
+    }
+    g.closePath();
+  }
+  const BIOME_COL = { green: '#4f9a40', island: '#5aa84a', snow: '#e8eef5', dark: '#3f3228' };
+  function drawMap() {
+    const c = $('mapCv'), g = c.getContext('2d'), Wc = c.width, Hc = c.height;
+    $('mapTabR').classList.toggle('on', mapMode === 'region'); $('mapTabW').classList.toggle('on', mapMode === 'world');
+    g.clearRect(0, 0, Wc, Hc);
+    const meE = ents.get(myId), info = $('mapInfo');
+    if (mapMode === 'region') {
+      $('mapTitle').textContent = 'Mapa — ' + REG.name;
+      const S = Math.min(Wc, Hc) - 20, x0 = (Wc - S) / 2, y0 = 10, k = S / MW;
+      g.fillStyle = '#0b1530'; g.fillRect(0, 0, Wc, Hc);
+      g.imageSmoothingEnabled = false; g.drawImage(miniImg, x0, y0, S, S);
+      g.strokeStyle = 'rgba(242,193,78,.8)'; g.lineWidth = 3; g.strokeRect(x0, y0, S, S);
+      g.textAlign = 'center'; g.font = '700 15px Poppins, sans-serif';
+      for (const l of REG.labels || []) { const lx = x0 + l.x * k, ly = y0 + l.y * k; g.lineWidth = 4; g.strokeStyle = 'rgba(0,0,0,.8)'; g.strokeText(l.t, lx, ly); g.fillStyle = '#ffe9b0'; g.fillText(l.t, lx, ly); }
+      for (const e of ents.values()) { if (e.id === myId) continue; g.fillStyle = e.kind === 'm' ? '#ff4d4d' : e.kind === 'n' ? '#4dd2ff' : '#ffffff'; g.fillRect(x0 + (e.x - RX) * k - 2, y0 + e.y * k - 2, 4, 4); }
+      if (meE) { const px = x0 + (meE.x - RX) * k, py = y0 + meE.y * k; g.fillStyle = '#fff'; g.strokeStyle = '#000'; g.lineWidth = 2; g.beginPath(); g.arc(px, py, 6, 0, 7); g.fill(); g.stroke(); g.fillStyle = '#ffd84a'; g.beginPath(); g.arc(px, py, 3, 0, 7); g.fill(); }
+      info.innerHTML = `<b style="color:var(--gold)">${REG.name}</b> · Cidade: ${REG.town} · Nível recomendado: ${REG.lvl}+<br>${REG.desc}<br>Para ir a outras terras, fale com o <b>Guardião do Portal</b> na cidade.`;
+      return;
+    }
+    // mundo
+    $('mapTitle').textContent = travelInfo ? 'Portal — escolha o destino' : 'Mapa do Mundo';
+    const sea = g.createLinearGradient(0, 0, 0, Hc); sea.addColorStop(0, '#123a6b'); sea.addColorStop(1, '#0b2547'); g.fillStyle = sea; g.fillRect(0, 0, Wc, Hc);
+    g.strokeStyle = 'rgba(255,255,255,.06)'; g.lineWidth = 1; for (let i = 0; i < 30; i++) { g.beginPath(); g.arc(Wc * ((i * 37) % 100) / 100, Hc * ((i * 61) % 100) / 100, 20 + i % 5 * 6, 0, 3); g.stroke(); }
+    const here = travelInfo ? travelInfo.here : REG.id;
+    g.setLineDash([6, 6]); g.strokeStyle = 'rgba(255,233,176,.35)'; g.lineWidth = 2;
+    for (const r of D.REGIONS) if (r.id !== here) { const a = D.REGIONS[here]; g.beginPath(); g.moveTo(a.wx / 100 * Wc, a.wy / 100 * Hc); g.lineTo(r.wx / 100 * Wc, r.wy / 100 * Hc); g.stroke(); }
+    g.setLineDash([]);
+    for (const r of D.REGIONS) {
+      const cx = r.wx / 100 * Wc, cy = r.wy / 100 * Hc, rad = Math.min(Wc, Hc) * 0.11;
+      islandPath(g, cx, cy, rad + 8, r.id * 1.7); g.fillStyle = '#d9c283'; g.fill();
+      islandPath(g, cx, cy, rad, r.id * 1.7); g.fillStyle = BIOME_COL[r.biome]; g.fill();
+      if (r.id === REG.id && miniImg) { g.save(); islandPath(g, cx, cy, rad, r.id * 1.7); g.clip(); g.globalAlpha = .55; g.drawImage(miniImg, cx - rad * 1.3, cy - rad * 1.1, rad * 2.6, rad * 2.2); g.restore(); }
+      g.fillStyle = '#8f877a'; g.fillRect(cx - 7, cy - 7, 14, 14); g.strokeStyle = '#3a342c'; g.lineWidth = 2; g.strokeRect(cx - 7, cy - 7, 14, 14);
+      g.textAlign = 'center'; g.font = '700 17px Lora, serif'; g.lineWidth = 4; g.strokeStyle = 'rgba(0,0,0,.85)';
+      g.strokeText(r.name, cx, cy + rad + 26); g.fillStyle = '#ffe9b0'; g.fillText(r.name, cx, cy + rad + 26);
+      g.font = '600 12px Poppins, sans-serif'; const sub = `${r.town} · Nv ${r.lvl}+`;
+      g.strokeText(sub, cx, cy + rad + 42); g.fillStyle = '#cfd8e6'; g.fillText(sub, cx, cy + rad + 42);
+      if (r.id === here) { g.fillStyle = '#ffd84a'; g.beginPath(); g.moveTo(cx, cy - 12); g.lineTo(cx - 9, cy - 28); g.lineTo(cx + 9, cy - 28); g.fill(); g.font = '700 12px Poppins'; g.strokeText('Você está aqui', cx, cy - 34); g.fillStyle = '#fff'; g.fillText('Você está aqui', cx, cy - 34); }
+    }
+    info.innerHTML = '';
+    if (!travelInfo) { info.innerHTML = 'Cada terra é carregada só quando você viaja. Para viajar, fale com o <b>Guardião do Portal</b> (ao lado da fonte, em cada cidade).'; return; }
+    const lvl = travelInfo.level, gold = me.gold;
+    for (const r of D.REGIONS) {
+      if (r.id === here) continue;
+      const cost = r.id === 0 ? 50 : r.cost, ok = lvl >= r.lvl && gold >= cost;
+      const row = document.createElement('div'); row.className = 'shopItem';
+      row.innerHTML = `<div class="n"><b>${r.name}</b> — ${r.town}<br><small>${r.desc} · Nível ${r.lvl}+ · ${cost} ouro</small></div>`;
+      const b = document.createElement('button'); b.className = 'sbtn'; b.textContent = lvl < r.lvl ? `Nível ${r.lvl}` : gold < cost ? 'Sem ouro' : 'Viajar';
+      b.disabled = !ok; if (!ok) b.style.opacity = .45;
+      b.onclick = () => { send({ t: 'travel', to: r.id }); };
+      row.appendChild(b); info.appendChild(row);
+    }
+  }
+
   function openPanel(tab) {
     closeModals(); curTab = tab; $('mPanel').style.display = 'flex';
     $('panelTitle').textContent = { inv: 'Mochila', stats: 'Personagem', quest: 'Missão' }[tab];

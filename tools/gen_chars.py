@@ -4,10 +4,12 @@ Célula final 128x192 (desenhada em coordenadas lógicas 64x96, supersample 8x).
 Uso: python3 tools/gen_chars.py  -> public/assets/chars/*.png + manifest.json
 """
 import json, math, os, sys
+from multiprocessing import Pool
+from multiprocessing.pool import ThreadPool
 from PIL import Image, ImageDraw, ImageFilter, ImageChops
 
 LW, LH = 64, 96           # coordenadas lógicas
-OUT_SCALE = 3             # célula final 192x288: mais definição em retratos e animações
+OUT_SCALE = 2             # célula final 128x192
 SS = 6                    # supersample sobre o lógico
 CW, CH = LW * SS, LH * SS
 OUT = os.path.join(os.path.dirname(__file__), '..', 'public', 'assets', 'chars')
@@ -440,8 +442,6 @@ if __name__ == '__main__':
     man['sheets'] = [n for n, _ in jobs]
     todo = [i for i, (n, _) in enumerate(jobs) if not only or n.startswith(only)]
     JOBS[:] = jobs
-from multiprocessing import Pool
-from multiprocessing.pool import ThreadPool
     # No Windows os workers iniciam por spawn e não herdam as funções de
     # camadas já montadas em JOBS. Executar em sequência mantém o gerador
     # determinístico e evita folhas vazias/erros durante a exportação.
