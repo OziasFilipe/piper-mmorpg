@@ -282,5 +282,112 @@ const SPR = (function () {
     });
   }
 
-  return { tile, treeObj, rockObj, entity, itemIcon, spellIcon, hash, mk };
+  // ------------------------------------------------------------ ÁGUA E PONTE CONTÍNUAS
+  // As texturas são desenhadas como padrões ancorados no MUNDO (não no quadrado),
+  // então os tiles vizinhos continuam a mesma imagem, sem emendas.
+  const GIMG = {}; let pats = null;
+  ['water-seamless.jpg', 'bridge-h.png', 'bridge-v.png'].forEach(n => {
+    const im = new Image(); im.onload = () => { GIMG[n] = im; pats = null; }; im.src = 'assets/world/' + n;
+  });
+  function getPats(ctx) {
+    if (pats) return pats;
+    if (!GIMG['water-seamless.jpg'] || !GIMG['bridge-h.png'] || !GIMG['bridge-v.png'] || typeof DOMMatrix === 'undefined') return null;
+    pats = { water: ctx.createPattern(GIMG['water-seamless.jpg'], 'repeat'), bh: ctx.createPattern(GIMG['bridge-h.png'], 'repeat'), bv: ctx.createPattern(GIMG['bridge-v.png'], 'repeat') };
+    return pats;
+  }
+  function fillPat(ctx, pat, tx, ty, sc, dx, dy, w, h) {
+    pat.setTransform(new DOMMatrix([sc, 0, 0, sc, tx, ty]));
+    ctx.fillStyle = pat; ctx.fillRect(dx, dy, w, h);
+  }
+  // contorno ondulado da margem, contínuo entre tiles (usa a coordenada do mundo)
+  const wob = u => 3.4 + 1.4 * Math.sin(u * 0.21) + 0.8 * Math.sin(u * 0.53 + 1.7);
+  const BANK = { [T.SAND]: '#d9c283', [T.PATH]: '#a9875a', [T.FLOOR]: '#9c9484', [T.WALL]: '#6b655d' };
+  function shoreEdge(ctx, side, dx, dy, wx, wy, col, foamA) {
+    // side: 0 norte, 1 sul, 2 oeste, 3 leste
+    const pts = [];
+    for (let i = 0; i <= 32; i += 2) {
+      const u = (side < 2 ? wx : wy) + i, d = wob(u);
+      if (side === 0) pts.push([dx + i, dy + d]);
+      else if (side === 1) pts.push([dx + i, dy + 32 - d]);
+      else if (side === 2) pts.push([dx + d, dy + i]);
+      else pts.push([dx + 32 - d, dy + i]);
+    }
+    // sombra de profundidade logo abaixo da margem
+    const g = side === 0 ? ctx.createLinearGradient(0, dy, 0, dy + 13) : side === 1 ? ctx.createLinearGradient(0, dy + 32, 0, dy + 19)
+      : side === 2 ? ctx.createLinearGradient(dx, 0, dx + 13, 0) : ctx.createLinearGradient(dx + 32, 0, dx + 19, 0);
+    g.addColorStop(0, 'rgba(6,30,60,.38)'); g.addColorStop(1, 'rgba(6,30,60,0)');
+    ctx.fillStyle = g; ctx.fillRect(dx, dy, 32, 32);
+    // faixa de terra/areia
+    ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
+    for (const q of pts) ctx.lineTo(q[0], q[1]);
+    if (side === 0) { ctx.lineTo(dx + 32.05, dy - 0.05); ctx.lineTo(dx - 0.05, dy - 0.05); }
+    else if (side === 1) { ctx.lineTo(dx + 32.05, dy + 32.05); ctx.lineTo(dx - 0.05, dy + 32.05); }
+    else if (side === 2) { ctx.lineTo(dx - 0.05, dy + 32.05); ctx.lineTo(dx - 0.05, dy - 0.05); }
+    else { ctx.lineTo(dx + 32.05, dy + 32.05); ctx.lineTo(dx + 32.05, dy - 0.05); }
+    ctx.closePath(); ctx.fillStyle = col; ctx.fill();
+    // linha de areia molhada + espuma
+    ctx.lineWidth = 1.6; ctx.strokeStyle = 'rgba(90,70,40,.45)';
+    ctx.beginPath(); pts.forEach((q, i) => i ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1])); ctx.stroke();
+    const o = 1.6, ofs = side === 0 ? [0, o] : side === 1 ? [0, -o] : side === 2 ? [o, 0] : [-o, 0];
+    ctx.lineWidth = 1.2; ctx.strokeStyle = `rgba(235,250,255,${foamA})`;
+    ctx.beginPath(); pts.forEach((q, i) => i ? ctx.lineTo(q[0] + ofs[0], q[1] + ofs[1]) : ctx.moveTo(q[0] + ofs[0], q[1] + ofs[1])); ctx.stroke();
+  }
+  function bankColor(k) { return BANK[k] || '#c9b47c'; }
+  function waterTile(ctx, x, y, dx, dy, now, ox, oy, at, P) {
+    const t = now / 1000;
+    // correnteza lenta: o padrão inteiro desliza, sem camadas transparentes (que marcariam a grade)
+    fillPat(ctx, P.water, ox + t * 5 + Math.sin(t * 0.6) * 3, oy + t * 2.5, 0.25, dx, dy, 32.05, 32.05);
+    const k = (xx, yy) => at(xx, yy);
+    const land = q => q !== T.WATER && q !== T.BRIDGE;
+    const n = k(x, y - 1), s = k(x, y + 1), w = k(x - 1, y), e = k(x + 1, y);
+    // sombra da ponte na água
+    const shade = (x0, y0, x1, y1) => { const g = ctx.createLinearGradient(x0, y0, x1, y1); g.addColorStop(0, 'rgba(0,0,0,.42)'); g.addColorStop(1, 'rgba(0,0,0,0)'); ctx.fillStyle = g; ctx.fillRect(dx, dy, 32, 32); };
+    if (n === T.BRIDGE) shade(0, dy, 0, dy + 9); if (s === T.BRIDGE) shade(0, dy + 32, 0, dy + 26);
+    if (w === T.BRIDGE) shade(dx, 0, dx + 9, 0); if (e === T.BRIDGE) shade(dx + 32, 0, dx + 26, 0);
+    const foam = (0.45 + 0.2 * Math.sin(now / 650 + x * 0.7 + y * 0.4)).toFixed(2);
+    const wx = x * 32, wy = y * 32;
+    if (land(n)) shoreEdge(ctx, 0, dx, dy, wx, wy, bankColor(n), foam);
+    if (land(s)) shoreEdge(ctx, 1, dx, dy, wx, wy, bankColor(s), foam);
+    if (land(w)) shoreEdge(ctx, 2, dx, dy, wx, wy, bankColor(w), foam);
+    if (land(e)) shoreEdge(ctx, 3, dx, dy, wx, wy, bankColor(e), foam);
+    // cantos externos (terra só na diagonal)
+    const corner = (cx, cy, q, ang) => {
+      ctx.fillStyle = bankColor(q); ctx.beginPath(); ctx.arc(cx, cy, 5.2, ang, ang + Math.PI / 2); ctx.lineTo(cx, cy); ctx.fill();
+      ctx.strokeStyle = `rgba(235,250,255,${foam})`; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.arc(cx, cy, 6.6, ang, ang + Math.PI / 2); ctx.stroke();
+    };
+    const nw = k(x - 1, y - 1), ne = k(x + 1, y - 1), sw = k(x - 1, y + 1), se = k(x + 1, y + 1);
+    if (!land(n) && !land(w) && land(nw)) corner(dx, dy, nw, 0);
+    if (!land(n) && !land(e) && land(ne)) corner(dx + 32, dy, ne, Math.PI / 2);
+    if (!land(s) && !land(e) && land(se)) corner(dx + 32, dy + 32, se, Math.PI);
+    if (!land(s) && !land(w) && land(sw)) corner(dx, dy + 32, sw, -Math.PI / 2);
+  }
+  function bridgeTile(ctx, x, y, dx, dy, now, ox, oy, at, P) {
+    const isB = (xx, yy) => { const q = at(xx, yy); return q === T.BRIDGE || q === T.PATH; };
+    let hx = 0, vy = 0;
+    for (let k = 1; k <= 4; k++) { if (isB(x - k, y)) hx++; else break; }
+    for (let k = 1; k <= 4; k++) { if (isB(x + k, y)) hx++; else break; }
+    for (let k = 1; k <= 4; k++) { if (isB(x, y - k)) vy++; else break; }
+    for (let k = 1; k <= 4; k++) { if (isB(x, y + k)) vy++; else break; }
+    if (hx > vy) {      // ponte horizontal: tábuas atravessam de cima a baixo das linhas da ponte
+      let r0 = y; if (at(x, y - 1) === T.BRIDGE) r0 = y - 1;
+      const rows = at(x, r0 + 1) === T.BRIDGE ? 2 : 1, sc = rows * 32 / 256;
+      fillPat(ctx, P.bh, ox, oy + r0 * 32, sc, dx, dy, 32.05, 32.05);
+    } else {            // ponte vertical
+      let c0 = x; if (at(x - 1, y) === T.BRIDGE) c0 = x - 1;
+      const cols = at(c0 + 1, y) === T.BRIDGE ? 2 : 1, sc = cols * 32 / 256;
+      fillPat(ctx, P.bv, ox + c0 * 32, oy, sc, dx, dy, 32.05, 32.05);
+    }
+    // ponta da ponte encontrando a terra: sombra suave
+    const endShade = (x0, y0, x1, y1) => { const g = ctx.createLinearGradient(x0, y0, x1, y1); g.addColorStop(0, 'rgba(40,25,10,.35)'); g.addColorStop(1, 'rgba(40,25,10,0)'); ctx.fillStyle = g; ctx.fillRect(dx, dy, 32, 32); };
+    if (hx > vy) { if (at(x - 1, y) === T.PATH || at(x - 1, y) === T.SAND) endShade(dx, 0, dx + 5, 0); if (at(x + 1, y) === T.PATH || at(x + 1, y) === T.SAND) endShade(dx + 32, 0, dx + 27, 0); }
+    else { if (at(x, y - 1) === T.PATH || at(x, y - 1) === T.SAND) endShade(0, dy, 0, dy + 5); if (at(x, y + 1) === T.PATH || at(x, y + 1) === T.SAND) endShade(0, dy + 32, 0, dy + 27); }
+  }
+  // desenha um tile do chão; água e ponte usam as texturas contínuas
+  function ground(ctx, t, x, y, dx, dy, v, wf, now, at, ox, oy) {
+    const P = (t === T.WATER || t === T.BRIDGE) ? getPats(ctx) : null;
+    if (P) { if (t === T.WATER) waterTile(ctx, x, y, dx, dy, now, ox, oy, at, P); else bridgeTile(ctx, x, y, dx, dy, now, ox, oy, at, P); return; }
+    ctx.drawImage(tile(t, v, wf), dx, dy, 32.05, 32.05);
+  }
+
+  return { tile, ground, treeObj, rockObj, entity, itemIcon, spellIcon, hash, mk };
 })();

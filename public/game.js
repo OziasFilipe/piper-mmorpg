@@ -201,7 +201,7 @@
     const wf = Math.floor(now / 350) % 7;
     for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
       const t = tileAt(x, y), v = SPR.hash(x, y, 9) * 4 | 0;
-      ctx.drawImage(SPR.tile(t, v, wf), x * TS + ox, y * TS + oy, TS + 0.05, TS + 0.05);
+      SPR.ground(ctx, t, x, y, x * TS + ox, y * TS + oy, v, wf, now, tileAt, ox, oy);
     }
     // Marco visual do hub: a construção fica sob personagens e objetos para
     // preservar a leitura de profundidade do mapa.

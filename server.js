@@ -70,6 +70,11 @@ function genMap() {
     set(x, y, edge ? T.WALL : T.FLOOR);
   }
   for (let k = -1; k <= 2; k++) { set(CX + k, CY - 10, T.FLOOR); set(CX + k, CY + 10, T.FLOOR); set(CX - 10, CY + k, T.FLOOR); set(CX + 10, CY + k, T.FLOOR); }
+  // pontes só onde há água por perto (o resto vira estrada)
+  for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) if (get(x, y) === T.BRIDGE) {
+    let wet = false; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (get(x + dx, y + dy) === T.WATER) wet = true;
+    if (!wet) set(x, y, T.PATH);
+  }
   // fonte
   set(CX, CY, T.WATER); set(CX + 1, CY, T.WATER); set(CX, CY + 1, T.WATER); set(CX + 1, CY + 1, T.WATER);
   // casinhas decorativas
