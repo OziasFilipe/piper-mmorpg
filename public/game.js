@@ -13,7 +13,12 @@
   // ======================================================== ABERTURA
   const show = (id, on) => $(id).style.display = on ? (id === 'game' || id === 'title' ? 'block' : 'flex') : 'none';
   let loaded = false, titleShown = false;
-  CHARS.load(p => $('loadbar').firstElementChild.style.width = Math.round(p * 100) + '%').then(() => { loaded = true; onLoaded(); });
+  // Personagens e cenário carregam juntos: nada do mapa aparece com arte
+  // temporária, mas o renderer ainda possui fallback para conexões instáveis.
+  Promise.all([
+    CHARS.load(p => $('loadbar').firstElementChild.style.width = Math.round(p * 82) + '%'),
+    WORLD.load(p => $('loadbar').firstElementChild.style.width = (82 + Math.round(p * 18)) + '%')
+  ]).then(() => { loaded = true; onLoaded(); });
   const timers = [];
   timers.push(setTimeout(() => $('sA').classList.add('on'), 300));
   timers.push(setTimeout(() => $('sA').classList.remove('on'), 2700));
@@ -135,7 +140,7 @@
     Object.assign(me, m.me);
     const seen = new Set();
     for (const a of m.e) {
-      const [id, kind, x, y, dir, look, name, hp, flags, lv] = a; seen.add(id);
+      const [id, kind, x, y, dir, look, name, hp, flags, lv, attackMs] = a; seen.add(id);
       let e = ents.get(id);
       if (!e) { e = { id, kind, x, y, fx: x, fy: y, t0: 0, dur: 1, walk: 0, faceLeft: true }; ents.set(id, e); }
       else if (e.x !== x || e.y !== y) {
@@ -144,6 +149,7 @@
         e.x = x; e.y = y;
       }
       Object.assign(e, { dir, look, name, hp, flags, lv });
+      if (attackMs) e.attackUntil = now + attackMs;
       e.dur = moveDur(e);
       if (dir === 1) e.faceLeft = true; else if (dir === 3) e.faceLeft = false;
       if (id === myId && look !== myLook) { myLook = look; const pc = $('portrait'); const g = pc.getContext('2d'); g.clearRect(0, 0, 116, 116); g.drawImage(CHARS.portrait(look, 116), 0, 0); }
@@ -197,6 +203,11 @@
       const t = tileAt(x, y), v = SPR.hash(x, y, 9) * 4 | 0;
       ctx.drawImage(SPR.tile(t, v, wf), x * TS + ox, y * TS + oy, TS + 0.05, TS + 0.05);
     }
+    // Marco visual do hub: a construção fica sob personagens e objetos para
+    // preservar a leitura de profundidade do mapa.
+    if (WORLD.hub && CX >= x0 - 7 && CX <= x1 + 7 && CY >= y0 - 7 && CY <= y1 + 7) {
+      ctx.drawImage(WORLD.hub, (CX - 2.85) * TS + ox, (CY - 4.05) * TS + oy, 182, 176);
+    }
     for (const f of fxs) {
       const age = now - f.t0, sx = f.x * TS + ox, sy = f.y * TS + oy;
       if (f.k === 'blood' && age < 1500) { ctx.globalAlpha = 1 - age / 1500; ctx.fillStyle = '#9a0a0a'; ctx.beginPath(); ctx.ellipse(sx + 16, sy + 24, 7, 3, 0, 0, 7); ctx.fill(); ctx.globalAlpha = 1; }
@@ -213,8 +224,17 @@
     for (let y = y0; y <= y1 + 1; y++) {
       for (let x = x0; x <= x1; x++) {
         const t = tileAt(x, y);
-        if (t === T.TREE) ctx.drawImage(SPR.treeObj(SPR.hash(x, y, 3) * 6 | 0), x * TS + ox - 8, y * TS + oy - 26);
-        else if (t === T.ROCK) ctx.drawImage(SPR.rockObj(0), x * TS + ox, y * TS + oy);
+        if (t === T.TREE) {
+          if (WORLD.oak) {
+            const variant = SPR.hash(x, y, 3);
+            const w = 50 + (variant * 7 | 0), h = 65 + (variant * 8 | 0);
+            ctx.drawImage(WORLD.oak, x * TS + ox + 16 - w / 2, y * TS + oy + TS - h, w, h);
+          } else ctx.drawImage(SPR.treeObj(SPR.hash(x, y, 3) * 6 | 0), x * TS + ox - 8, y * TS + oy - 26);
+        }
+        else if (t === T.ROCK) {
+          if (WORLD.rock) ctx.drawImage(WORLD.rock, x * TS + ox - 4, y * TS + oy - 8, 40, 40);
+          else ctx.drawImage(SPR.rockObj(0), x * TS + ox, y * TS + oy);
+        }
       }
       const list = rows.get(y); if (list) { list.sort((a, b) => a[1].x - b[1].x); for (const [e, p] of list) drawEnt(e, p, now, ox, oy); }
     }
@@ -249,20 +269,26 @@
   function drawEnt(e, p, now, ox, oy) {
     let frame = 0; if (p.moving) frame = 1 + (e.walk % 2);
     const sx = p.x * TS + ox, sy = p.y * TS + oy;
+    const attackLeft = Math.max(0, (e.attackUntil || 0) - now);
+    const attackStep = attackLeft ? Math.sin((1 - attackLeft / 240) * Math.PI) * 3.2 : 0;
+    const dir = [[0, 1], [-1, 0], [0, -1], [1, 0]][e.dir] || [0, 0];
     if (typeof e.look === 'string' && e.look[0] === 'c') {
       ctx.fillStyle = 'rgba(0,0,0,.3)'; ctx.beginPath(); ctx.ellipse(sx + 16, sy + 28.5, 10, 3.6, 0, 0, 7); ctx.fill();
       if (e.flags & 2) { ctx.fillStyle = 'rgba(255,80,20,.28)'; ctx.beginPath(); ctx.ellipse(sx + 16, sy + 22, 17, 12, 0, 0, 7); ctx.fill(); }
       const img = CHARS.sprite(e.look, e.dir, frame);
       const breathe = p.moving ? 0 : Math.sin(now / 420 + e.id) * 0.35;
+      ctx.save(); ctx.translate(dir[0] * attackStep, dir[1] * attackStep * .45);
       ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
       ctx.drawImage(img, sx, sy + TS - 46.5 + breathe, 32, 48 - breathe);
-      ctx.imageSmoothingEnabled = false;
+      ctx.restore(); ctx.imageSmoothingEnabled = false;
       return;
     }
     if (e.kind === 'm' && !p.moving && Math.floor(now / 500 + e.id) % 4 === 0) frame = 1;
     const img = SPR.entity(e.kind, e.look, e.dir, frame, e.faceLeft);
     ctx.fillStyle = 'rgba(0,0,0,.28)'; ctx.beginPath(); ctx.ellipse(sx + 16, sy + 29, img.width > 32 ? 16 : 10, 4, 0, 0, 7); ctx.fill();
+    ctx.save(); ctx.translate(dir[0] * attackStep, dir[1] * attackStep * .45);
     ctx.drawImage(img, Math.round(sx + (TS - img.width) / 2), Math.round(sy + TS - img.height - 1));
+    ctx.restore();
   }
   function drawCorpse(f, sx, sy, age) {
     ctx.globalAlpha = age > 10000 ? 1 - (age - 10000) / 2000 : 1;
@@ -278,11 +304,28 @@
     const age = now - f.t0, sx = f.x * TS + ox, sy = f.y * TS + oy;
     switch (f.k) {
       case 'dmg': { if (age > 1100) return false; const k = age / 1100; ctx.globalAlpha = 1 - k * k; ctx.font = `800 ${(f.xp ? 11 : 14) * UI}px Poppins, sans-serif`; txt(String(f.v), sx + 16 + (f.xp ? 10 : 0), sy - 2 - k * 26 - (f.xp ? 10 : 0), f.c); ctx.globalAlpha = 1; return true; }
+      case 'swing': {
+        if (age > 260) return false;
+        const k = age / 260, dx = (f.tx ?? f.x) - f.x, dy = (f.ty ?? f.y) - f.y, ang = Math.atan2(dy, dx);
+        ctx.save(); ctx.translate(sx + 16, sy + 15); ctx.rotate(ang - 1.15 + k * 2.3);
+        ctx.globalAlpha = 1 - k; ctx.strokeStyle = f.c || '#fff'; ctx.shadowColor = f.c || '#fff'; ctx.shadowBlur = 7;
+        ctx.lineWidth = 2.5; ctx.beginPath(); ctx.arc(0, 0, 13 + k * 4, -.55, .9); ctx.stroke();
+        ctx.restore(); return true;
+      }
+      case 'hit': {
+        if (age > 280) return false;
+        const k = age / 280, c = f.c || '#fff'; ctx.save(); ctx.translate(sx + 16, sy + 15); ctx.globalAlpha = 1 - k;
+        ctx.strokeStyle = c; ctx.shadowColor = c; ctx.shadowBlur = 6; ctx.lineWidth = 1.7;
+        for (let i = 0; i < 7; i++) { const a = i / 7 * Math.PI * 2 + .3; const r = 4 + k * 13; ctx.beginPath(); ctx.moveTo(Math.cos(a) * (r - 4), Math.sin(a) * (r - 4)); ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r); ctx.stroke(); }
+        ctx.restore(); return true;
+      }
       case 'puff': { if (age > 400) return false; ctx.strokeStyle = 'rgba(140,190,255,' + (1 - age / 400) + ')'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(sx + 16, sy + 16, 4 + age / 30, 0, 7); ctx.stroke(); return true; }
       case 'slash': { if (age > 220) return false; ctx.strokeStyle = '#fff'; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.arc(sx + 16, sy + 16, 11, -2.4 + age / 120, -0.6 + age / 120); ctx.stroke(); return true; }
       case 'proj': {
         const dur = 260; if (age > dur) return false; const k = age / dur, px = (f.x + (f.tx - f.x) * k) * TS + ox + 16, py = (f.y + (f.ty - f.y) * k) * TS + oy + 10;
-        const c = FXC[f.fx] || '#fff'; ctx.fillStyle = c; ctx.shadowColor = c; ctx.shadowBlur = 12 * K; ctx.beginPath(); ctx.arc(px, py, f.fx === 'arcane' ? 3.5 : 5.5, 0, 7); ctx.fill(); ctx.shadowBlur = 0; ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(px, py, 1.5, 0, 7); ctx.fill(); return true;
+        const c = FXC[f.fx] || '#fff', prev = Math.max(0, k - .24), lx = (f.x + (f.tx - f.x) * prev) * TS + ox + 16, ly = (f.y + (f.ty - f.y) * prev) * TS + oy + 10;
+        ctx.strokeStyle = c; ctx.globalAlpha = .55 * (1 - k); ctx.lineWidth = 2.4; ctx.beginPath(); ctx.moveTo(lx, ly); ctx.lineTo(px, py); ctx.stroke();
+        ctx.globalAlpha = 1; ctx.fillStyle = c; ctx.shadowColor = c; ctx.shadowBlur = 12 * K; ctx.beginPath(); ctx.arc(px, py, f.fx === 'arcane' ? 3.5 : 5.5, 0, 7); ctx.fill(); ctx.shadowBlur = 0; ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(px, py, 1.5, 0, 7); ctx.fill(); return true;
       }
       case 'area': {
         if (age > 550) return false; const a = 1 - age / 550;

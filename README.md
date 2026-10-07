@@ -6,7 +6,7 @@
 2. Dê dois cliques em `iniciar.bat`. Ele abre http://localhost:3000.
 
 ## Colocar online no Render.com
-1. Este projeto já está no repositório **github.com/OziasFilipe/piper-mmorpg**. Abra o GitHub Desktop, faça **Commit to main** e depois **Push origin** (o `.gitignore` já deixa `node_modules` e `data` de fora).
+1. Crie um repositório no GitHub e suba **todo o conteúdo desta pasta** (o `.gitignore` já deixa `node_modules` e `data` de fora).
 2. Entre em https://render.com, faça login com o GitHub.
 3. Clique em **New +** > **Blueprint**, escolha o repositório e confirme. O Render lê o `render.yaml` sozinho.
    (Alternativa: **New +** > **Web Service** com Build `npm install`, Start `node server.js`, Health check `/health`.)

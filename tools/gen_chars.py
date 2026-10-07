@@ -7,7 +7,7 @@ import json, math, os, sys
 from PIL import Image, ImageDraw, ImageFilter, ImageChops
 
 LW, LH = 64, 96           # coordenadas lógicas
-OUT_SCALE = 2             # célula final 128x192
+OUT_SCALE = 3             # célula final 192x288: mais definição em retratos e animações
 SS = 6                    # supersample sobre o lógico
 CW, CH = LW * SS, LH * SS
 OUT = os.path.join(os.path.dirname(__file__), '..', 'public', 'assets', 'chars')
@@ -440,6 +440,15 @@ if __name__ == '__main__':
     man['sheets'] = [n for n, _ in jobs]
     todo = [i for i, (n, _) in enumerate(jobs) if not only or n.startswith(only)]
     JOBS[:] = jobs
-    from multiprocessing import Pool
-    with Pool() as pool: pool.map(run_job, todo)
+from multiprocessing import Pool
+from multiprocessing.pool import ThreadPool
+    # No Windows os workers iniciam por spawn e não herdam as funções de
+    # camadas já montadas em JOBS. Executar em sequência mantém o gerador
+    # determinístico e evita folhas vazias/erros durante a exportação.
+    if os.name == 'nt':
+        # Threads compartilham JOBS e Pillow libera trabalho nativo ao filtrar
+        # e redimensionar, acelerando a exportação sem o problema do spawn.
+        with ThreadPool() as pool: pool.map(run_job, todo)
+    else:
+        with Pool() as pool: pool.map(run_job, todo)
     json.dump(man, open(os.path.join(OUT, 'manifest.json'), 'w'))

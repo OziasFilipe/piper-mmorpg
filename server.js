@@ -223,6 +223,9 @@ function damage(t, dmg, src, color) {
   if (dmg <= 0) { addFx(t.x, t.y, { k: 'puff' }); return; }
   t.hp -= dmg;
   addFx(t.x, t.y, { k: 'dmg', v: dmg, c: color || (t.kind === 'p' ? '#f33' : '#ff5050') });
+  // O impacto é transmitido para todos que enxergam o combate. O dano segue
+  // calculado exclusivamente no servidor; isto é apenas retorno visual.
+  addFx(t.x, t.y, { k: 'hit', c: color || (t.kind === 'p' ? '#ff6b6b' : '#ffd1a1') });
   addFx(t.x, t.y, { k: 'blood' });
   if (t.kind === 'm') {
     if (src && src.kind === 'p') { t.dmgBy.set(src.id, (t.dmgBy.get(src.id) || 0) + dmg); if (!t.target) t.target = src.id; }
@@ -236,6 +239,8 @@ function damage(t, dmg, src, color) {
   }
 }
 function attack(a, t, mult, color) {
+  a.attackUntil = Date.now() + 240;
+  addFx(a.x, a.y, { k: 'swing', tx: t.x, ty: t.y, c: color || (a.kind === 'p' ? '#ffe3a3' : '#ff9a72') });
   let atk = a.kind === 'p' ? playerAtk(a) : MON[a.type].atk;
   if (a.kind === 'p' && a.berserk > Date.now()) atk *= 1.5;
   const def = t.kind === 'p' ? playerDef(t) : MON[t.type].def;
@@ -582,7 +587,8 @@ setInterval(() => {
       const hpPct = e.kind === 'n' ? 100 : Math.max(0, Math.round(100 * e.hp / (e.kind === 'p' ? maxHp(e) : e.mhp)));
       let look = e.look;
       if (e.kind === 'p') look = ['c', e.voc, e.eq.armor || '', e.eq.helmet || '', e.eq.weapon || '', e.eq.shield || '', e.app.skin, e.app.hs, e.app.hc, ''].join('|');
-      list.push([e.id, e.kind, e.x, e.y, e.dir, look, e.name, hpPct, e.kind === 'p' ? (e.skull > now ? 1 : 0) | (e.berserk > now ? 2 : 0) : 0, e.kind === 'p' ? e.level : 0]);
+      const attackMs = Math.max(0, (e.attackUntil || 0) - now);
+      list.push([e.id, e.kind, e.x, e.y, e.dir, look, e.name, hpPct, e.kind === 'p' ? (e.skull > now ? 1 : 0) | (e.berserk > now ? 2 : 0) : 0, e.kind === 'p' ? e.level : 0, attackMs]);
     }
     const cds = {}; for (const k in p.cds) if (p.cds[k] > now) cds[k] = p.cds[k] - now;
     const me = { x: p.x, y: p.y, hp: p.hp, mhp: maxHp(p), mp: p.mp, mmp: maxMp(p), lv: p.level, xp: p.xp, xpa: xpFor(p.level), xpb: xpFor(p.level + 1), gold: p.gold, tg: p.target, cds, voc: p.voc, town: isTown(p.x, p.y), berserk: Math.max(0, p.berserk - now) };
@@ -593,7 +599,6 @@ setInterval(() => {
 }, TICK);
 
 setInterval(() => { for (const p of players.values()) persist(p); saveDb(); }, 30000);
-function shutdown() { for (const p of players.values()) persist(p); saveDb(); process.exit(0); }
-process.on('SIGINT', shutdown); process.on('SIGTERM', shutdown);
+process.on('SIGINT', () => { for (const p of players.values()) persist(p); saveDb(); process.exit(0); });
 
-server.listen(PORT, '0.0.0.0', () => console.log(`As Aventuras do Piper rodando em http://localhost:${PORT}`));
+server.listen(PORT, () => console.log(`As Aventuras do Piper rodando em http://localhost:${PORT}`));

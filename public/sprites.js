@@ -23,29 +23,51 @@ const SPR = (function () {
     g.fillStyle = base; g.fillRect(0, 0, 32, 32);
     for (let i = 0; i < n; i++) { const x = (hash(i, seed, 1) * 16 | 0) * 2, y = (hash(i, seed, 2) * 16 | 0) * 2; g.fillStyle = cols[i % cols.length]; g.fillRect(x, y, sz, sz); }
   }
+  // Recorta regiões diferentes de uma textura grande. Assim o mesmo PNG fica
+  // leve na rede e não forma um tabuleiro repetitivo no mapa inteiro.
+  function texture(g, img, seed, frame = 0, drift = 0) {
+    if (!img || !img.width) return false;
+    const side = Math.max(72, Math.min(img.width, img.height) * .16);
+    const maxX = Math.max(0, img.width - side), maxY = Math.max(0, img.height - side);
+    const sx = Math.min(maxX, Math.floor(hash(seed, 71 + frame * 3, 4) * (maxX + 1) + drift * frame));
+    const sy = Math.min(maxY, Math.floor(hash(seed, 91 + frame * 5, 7) * (maxY + 1)));
+    g.drawImage(img, sx, sy, side, side, 0, 0, 32, 32);
+    return true;
+  }
   function tile(t, v, frame) {
     return memo(`t${t}_${v}_${t === T.WATER || t === T.BRIDGE ? frame : 0}`, () => {
       const c = mk(32, 32), g = c.getContext('2d'), r = painter(g, 2), s = v * 7 + t * 31;
       switch (t) {
         case T.GRASS: case T.TREE: case T.FLOWER:
-          speckle(g, '#4b8d3b', ['#3f7d32', '#5c9f46', '#3a7330', '#55963f'], 30, s);
-          for (let i = 0; i < 4; i++) { const x = (hash(i, s, 5) * 15 | 0), y = (hash(i, s, 6) * 14 | 0); r(x, y, 1, 2, '#357029'); }
+          if (!texture(g, WORLD.grass, s)) speckle(g, '#4b8d3b', ['#3f7d32', '#5c9f46', '#3a7330', '#55963f'], 30, s);
+          g.fillStyle = 'rgba(20,70,28,.12)'; g.fillRect(0, 0, 32, 32);
+          for (let i = 0; i < 5; i++) { const x = (hash(i, s, 5) * 15 | 0), y = (hash(i, s, 6) * 14 | 0); r(x, y, 1, 2, i % 2 ? '#357029' : '#70a94c'); }
           if (t === T.FLOWER) for (let i = 0; i < 3; i++) { const x = 1 + (hash(i, s, 7) * 13 | 0), y = 1 + (hash(i, s, 8) * 13 | 0), col = ['#f3e04a', '#f06a8a', '#ffffff', '#9a7cf0'][(hash(i, s, 9) * 4) | 0]; r(x, y + 1, 1, 1, col); r(x + 1, y, 1, 1, col); r(x + 2, y + 1, 1, 1, col); r(x + 1, y + 2, 1, 1, col); r(x + 1, y + 1, 1, 1, '#e9a020'); }
           break;
         case T.WATER: case T.BRIDGE: {
-          g.fillStyle = '#2b5fae'; g.fillRect(0, 0, 32, 32);
-          for (let i = 0; i < 5; i++) { const x = ((hash(i, s, 1) * 12 | 0) + frame * 2) % 14, y = (hash(i, s, 2) * 15 | 0); r(x, y, 3, 1, '#4a83d2'); r(x + 1, y + 1, 2, 1, '#2350a0'); }
+          if (!texture(g, WORLD.water, s, frame, 12)) {
+            g.fillStyle = '#2b5fae'; g.fillRect(0, 0, 32, 32);
+            for (let i = 0; i < 5; i++) { const x = ((hash(i, s, 1) * 12 | 0) + frame * 2) % 14, y = (hash(i, s, 2) * 15 | 0); r(x, y, 3, 1, '#4a83d2'); r(x + 1, y + 1, 2, 1, '#2350a0'); }
+          }
+          g.fillStyle = 'rgba(18,71,135,.18)'; g.fillRect(0, 0, 32, 32);
+          for (let i = 0; i < 3; i++) { const x = ((hash(i, s, 1) * 13 | 0) + frame * 2) % 15, y = hash(i, s, 2) * 15 | 0; r(x, y, 3, .45, 'rgba(221,248,255,.48)'); }
           if (t === T.BRIDGE) {
-            for (let y = 0; y < 16; y += 2) { r(1, y, 14, 2, (y / 2) % 2 ? '#8b5e34' : '#9a6b3d'); r(1, y + 1, 14, 0.5, '#5c3c1e'); }
-            r(0, 0, 1, 16, '#5c3c1e'); r(15, 0, 1, 16, '#5c3c1e');
+            if (!texture(g, WORLD.bridge, s, 0)) {
+              for (let y = 0; y < 16; y += 2) { r(1, y, 14, 2, (y / 2) % 2 ? '#8b5e34' : '#9a6b3d'); r(1, y + 1, 14, .5, '#5c3c1e'); }
+              r(0, 0, 1, 16, '#5c3c1e'); r(15, 0, 1, 16, '#5c3c1e');
+            }
+            // Corrimãos mantêm a ponte legível mesmo quando o recorte da
+            // textura mostra apenas o madeiramento central.
+            r(0, 0, .8, 16, '#342015'); r(15.2, 0, .8, 16, '#342015');
+            r(.8, 0, .35, 16, '#c29962'); r(14.85, 0, .35, 16, '#c29962');
           }
           break; }
-        case T.SAND: speckle(g, '#d8c07c', ['#c8ae68', '#e6d297', '#cdb571'], 34, s); break;
-        case T.PATH: speckle(g, '#9b7b4f', ['#8a6b43', '#ac8c5d', '#927349'], 36, s); for (let i = 0; i < 3; i++) r(hash(i, s, 3) * 15 | 0, hash(i, s, 4) * 15 | 0, 1, 1, '#7a7268'); break;
+        case T.SAND: speckle(g, '#d8c07c', ['#c8ae68', '#e6d297', '#cdb571', '#f0dca1'], 42, s); for (let i = 0; i < 3; i++) { const x = hash(i, s, 3) * 15 | 0, y = hash(i, s, 4) * 15 | 0; r(x, y, 3, .5, '#b89b5d'); } break;
+        case T.PATH: speckle(g, '#9b7b4f', ['#8a6b43', '#ac8c5d', '#927349', '#b09264'], 42, s); for (let i = 0; i < 5; i++) { const x = hash(i, s, 3) * 15 | 0, y = hash(i, s, 4) * 15 | 0; r(x, y, 1, 1, '#6f665b'); if (i % 2) r(x + 1, y + 1, 1, .5, '#c5a87a'); } break;
         case T.FLOOR:
           g.fillStyle = '#8f877a'; g.fillRect(0, 0, 32, 32);
           r(0, 0, 16, 0.5, '#6e675c'); r(0, 8, 16, 0.5, '#6e675c'); r(v % 2 ? 4 : 10, 0, 0.5, 8, '#6e675c'); r(v % 2 ? 12 : 6, 8, 0.5, 8, '#6e675c');
-          for (let i = 0; i < 8; i++) r(hash(i, s, 3) * 16 | 0, hash(i, s, 4) * 16 | 0, 1, 1, i % 2 ? '#a39b8e' : '#837b6f');
+          for (let i = 0; i < 10; i++) r(hash(i, s, 3) * 16 | 0, hash(i, s, 4) * 16 | 0, 1, 1, i % 2 ? '#a39b8e' : '#837b6f');
           break;
         case T.WALL:
           g.fillStyle = '#5a544d'; g.fillRect(0, 0, 32, 32);
