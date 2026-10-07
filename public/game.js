@@ -327,9 +327,15 @@
     ctx.globalAlpha = age > 10000 ? 1 - (age - 10000) / 2000 : 1;
     ctx.fillStyle = '#6a0808'; ctx.beginPath(); ctx.ellipse(sx + 16, sy + 24, 12, 5, 0, 0, Math.PI * 2); ctx.fill();
     if (f.look !== 'player') {
-      const img = SPR.entity('m', f.look, 0, 0, true);
+      // Mantém o mesmo monstro desenhado no mapa também após a derrota;
+      // sem isso o corpo reaparecia como o antigo sprite procedural.
+      const enemy = ENEMIES.sprite(f.look, 0);
+      const img = enemy || SPR.entity('m', f.look, 0, 0, true);
+      const size = enemy ? (f.look === 'dragon' ? 54 : (f.look === 'bear' || f.look === 'troll') ? 42 : 34) : img.width;
       ctx.save(); ctx.translate(sx + 16, sy + 20); ctx.rotate(Math.PI / 2); ctx.globalAlpha = 0.6;
-      ctx.drawImage(img, -img.width / 2, -img.height / 2 - 2, img.width * 0.9, img.height * 0.9); ctx.restore();
+      ctx.imageSmoothingEnabled = !!enemy; ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(img, -size / 2, -size / 2 - 2, size * 0.9, size * 0.9); ctx.restore();
+      ctx.imageSmoothingEnabled = false;
     } else { ctx.fillStyle = '#ddd'; ctx.fillRect(sx + 10, sy + 20, 12, 3); ctx.fillRect(sx + 13, sy + 16, 6, 6); }
     ctx.globalAlpha = 1;
   }
