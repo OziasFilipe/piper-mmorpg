@@ -1,0 +1,599 @@
+'use strict';
+// As Aventuras do Piper — servidor MMORPG 2D (Node.js + WebSocket)
+const http = require('http'), fs = require('fs'), path = require('path'), crypto = require('crypto');
+const { WebSocketServer } = require('ws');
+const D = require('./public/defs.js');
+const { T, BLOCK, VOC, ITEMS, SPELLS, MON, ZONES, TASKS, NPCS, SHOPS, STATS, xpFor } = D;
+
+const PORT = +process.env.PORT || 3000;
+const XP_RATE = +process.env.XP_RATE || 2;
+const W = D.W, H = D.H, CX = W >> 1, CY = H >> 1;
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data'), SAVE_FILE = path.join(DATA_DIR, 'players.json');
+const TICK = 100;
+
+// ------------------------------------------------------------------ MAPA
+function rng(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+const R = rng(1337);
+function noise(cell) {
+  const gw = Math.ceil(W / cell) + 2, gh = Math.ceil(H / cell) + 2, g = [];
+  for (let i = 0; i < gw * gh; i++) g.push(R());
+  const sm = t => t * t * (3 - 2 * t);
+  return (x, y) => {
+    const fx = x / cell, fy = y / cell, ix = Math.floor(fx), iy = Math.floor(fy), tx = sm(fx - ix), ty = sm(fy - iy);
+    const a = g[iy * gw + ix], b = g[iy * gw + ix + 1], c = g[(iy + 1) * gw + ix], d = g[(iy + 1) * gw + ix + 1];
+    return (a * (1 - tx) + b * tx) * (1 - ty) + (c * (1 - tx) + d * tx) * ty;
+  };
+}
+const tiles = new Uint8Array(W * H);
+const get = (x, y) => (x < 0 || y < 0 || x >= W || y >= H) ? T.WATER : tiles[y * W + x];
+const set = (x, y, v) => { if (x >= 0 && y >= 0 && x < W && y < H) tiles[y * W + x] = v; };
+const isTown = (x, y) => Math.abs(x - CX) <= 10 && Math.abs(y - CY) <= 10;
+const inCave = (x, y) => x > CX + 28 && y > CY + 28;
+const inDesert = (x, y) => x > CX + 28 && y < CY - 28;
+
+function genMap() {
+  const n1 = noise(10), n2 = noise(4), n3 = noise(3);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    let t = T.GRASS; const v = n1(x, y) * 0.75 + n3(x, y) * 0.25;
+    const dTown = Math.max(Math.abs(x - CX), Math.abs(y - CY));
+    if (inDesert(x, y)) t = R() < 0.035 ? T.ROCK : T.SAND;
+    else if (v < 0.3) t = T.WATER;
+    else if (v < 0.34) t = T.SAND;
+    else if (n2(x, y) > (dTown < 35 ? 0.68 : 0.6)) t = T.TREE;
+    else if (R() < 0.03) t = T.FLOWER;
+    if (x < 3 || y < 3 || x >= W - 3 || y >= H - 3) t = T.WATER;
+    tiles[y * W + x] = t;
+  }
+  // caverna (sudeste)
+  for (let y = CY + 29; y < H - 3; y++) for (let x = CX + 29; x < W - 3; x++) set(x, y, T.CAVEWALL);
+  let px = CX + 31, py = CY + 40;
+  for (let i = 0; i < 6500; i++) {
+    for (let dy = 0; dy < 2; dy++) for (let dx = 0; dx < 2; dx++) { const xx = px + dx, yy = py + dy; if (xx > CX + 29 && yy > CY + 29 && xx < W - 4 && yy < H - 4) set(xx, yy, T.CAVE); }
+    const d = R() * 4 | 0; px += [0, 1, 0, -1][d]; py += [1, 0, -1, 0][d];
+    px = Math.max(CX + 30, Math.min(W - 6, px)); py = Math.max(CY + 30, Math.min(H - 6, py));
+  }
+  // estradas
+  const road = (x, y) => { const t = get(x, y); if (t === T.WATER) set(x, y, T.BRIDGE); else if (t !== T.CAVE) set(x, y, inCave(x, y) ? T.CAVE : T.PATH); };
+  const road2 = (x, y) => { road(x, y); road(x + 1, y); };
+  const road2v = (x, y) => { road(x, y); road(x, y + 1); };
+  for (let y = 4; y < CY - 10; y++) road2(CX, y);
+  for (let y = CY + 11; y < H - 4; y++) road2(CX, y);
+  for (let x = 4; x < CX - 10; x++) road2v(x, CY);
+  for (let x = CX + 11; x < W - 4; x++) road2v(x, CY);
+  for (let x = CX; x <= CX + 32; x++) road2v(x, CY + 40);
+  for (let y = CY - 42; y < CY; y++) road2(CX + 40, y);
+  // limpar arredores da cidade
+  for (let y = CY - 13; y <= CY + 13; y++) for (let x = CX - 13; x <= CX + 13; x++) if (BLOCK[get(x, y)]) set(x, y, T.GRASS);
+  // cidade murada
+  for (let y = CY - 10; y <= CY + 10; y++) for (let x = CX - 10; x <= CX + 10; x++) {
+    const edge = Math.abs(x - CX) === 10 || Math.abs(y - CY) === 10;
+    set(x, y, edge ? T.WALL : T.FLOOR);
+  }
+  for (let k = -1; k <= 2; k++) { set(CX + k, CY - 10, T.FLOOR); set(CX + k, CY + 10, T.FLOOR); set(CX - 10, CY + k, T.FLOOR); set(CX + 10, CY + k, T.FLOOR); }
+  // fonte
+  set(CX, CY, T.WATER); set(CX + 1, CY, T.WATER); set(CX, CY + 1, T.WATER); set(CX + 1, CY + 1, T.WATER);
+  // casinhas decorativas
+  const hut = (x0, y0) => { for (let y = y0; y < y0 + 3; y++) for (let x = x0; x < x0 + 4; x++) set(x, y, T.WALL); };
+  hut(CX - 8, CY - 8); hut(CX + 5, CY - 8); hut(CX - 8, CY + 5); hut(CX + 5, CY + 5);
+}
+genMap();
+const SPAWN = { x: CX, y: CY + 4 };
+
+// ------------------------------------------------------------------ ENTIDADES
+let nextId = 1;
+const ents = new Map();
+const occ = new Map();
+const players = new Map(); // id -> player
+const cheb = (a, b) => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
+const DX = [0, -1, 0, 1], DY = [1, 0, -1, 0]; // 0 baixo,1 esquerda,2 cima,3 direita
+
+function place(e, x, y) {
+  if (e.x != null && occ.get(e.y * W + e.x) === e) occ.delete(e.y * W + e.x);
+  e.x = x; e.y = y; occ.set(y * W + x, e);
+}
+function unplace(e) { if (occ.get(e.y * W + e.x) === e) occ.delete(e.y * W + e.x); }
+function walkable(x, y, forMon) {
+  if (BLOCK[get(x, y)]) return false;
+  if (forMon && isTown(x, y)) return false;
+  return true;
+}
+function free(x, y, forMon) { return walkable(x, y, forMon) && !occ.has(y * W + x); }
+function findFree(x, y) {
+  for (let r = 0; r < 8; r++) for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) if (free(x + dx, y + dy)) return { x: x + dx, y: y + dy };
+  return { x, y };
+}
+
+// NPCs
+for (const n of NPCS) {
+  const e = { id: nextId++, kind: 'n', npc: n, name: n.name, look: n.look, dir: 0 };
+  place(e, CX + n.dx, CY + n.dy); ents.set(e.id, e);
+}
+
+// Pontos de spawn
+function zoneOf(x, y) {
+  if (isTown(x, y)) return null;
+  if (inCave(x, y)) return 'cave';
+  if (inDesert(x, y)) return 'desert';
+  const d = Math.max(Math.abs(x - CX), Math.abs(y - CY));
+  if (d < 16) return null; if (d < 38) return 'meadow'; if (d < 58) return 'forest'; return 'wild';
+}
+const spawns = [];
+for (let y = 3; y < H - 3; y++) for (let x = 3; x < W - 3; x++) {
+  const z = zoneOf(x, y); if (!z || !walkable(x, y, true)) continue;
+  const t = get(x, y); if (t === T.PATH || t === T.BRIDGE) continue;
+  if (R() > 1 / 55) continue;
+  const list = ZONES[z]; const tot = list.reduce((s, a) => s + a[1], 0); let r = R() * tot, type = list[0][0];
+  for (const [m, w] of list) { r -= w; if (r <= 0) { type = m; break; } }
+  spawns.push({ type, x, y, ent: null, at: 0 });
+}
+function spawnMon(s) {
+  if (!free(s.x, s.y, true)) { s.at = Date.now() + 5000; return; }
+  const def = MON[s.type];
+  const e = { id: nextId++, kind: 'm', type: s.type, name: def.name, look: s.type, hp: def.hp, mhp: def.hp, dir: 0, home: s, nextAct: 0, nextAtk: 0, target: null, dmgBy: new Map() };
+  place(e, s.x, s.y); ents.set(e.id, e); s.ent = e;
+}
+spawns.forEach(spawnMon);
+console.log(`Mapa ${W}x${H} gerado, ${spawns.length} monstros.`);
+
+// ------------------------------------------------------------------ PERSISTÊNCIA
+let db = {};
+try { fs.mkdirSync(DATA_DIR, { recursive: true }); db = JSON.parse(fs.readFileSync(SAVE_FILE, 'utf8')); } catch (e) { db = {}; }
+function saveDb() { try { fs.writeFileSync(SAVE_FILE + '.tmp', JSON.stringify(db)); fs.renameSync(SAVE_FILE + '.tmp', SAVE_FILE); } catch (e) { console.error('save', e); } }
+const SAVE_KEYS = ['name', 'voc', 'x', 'y', 'level', 'maxLevel', 'xp', 'hp', 'mp', 'stats', 'points', 'gold', 'inv', 'eq', 'taskIdx', 'task', 'kills', 'deaths', 'salt', 'hash', 'app'];
+function persist(p) { const o = {}; for (const k of SAVE_KEYS) o[k] = p[k]; db[p.name.toLowerCase()] = o; }
+const hashPw = (pw, salt) => crypto.createHash('sha256').update(salt + ':' + pw).digest('hex');
+
+// ------------------------------------------------------------------ JOGADOR
+const maxHp = p => VOC[p.voc].hp + VOC[p.voc].hpL * (p.level - 1) + p.stats.vit * 10;
+const maxMp = p => VOC[p.voc].mp + VOC[p.voc].mpL * (p.level - 1) + p.stats.mag * 5;
+function eqSum(p, k) { let s = 0; for (const slot in p.eq) { const id = p.eq[slot]; if (id && ITEMS[id][k]) s += ITEMS[id][k]; } return s; }
+function playerAtk(p) {
+  const base = VOC[p.voc].atk + p.level * 1.2 + eqSum(p, 'atk');
+  return p.voc === 'warrior' ? base + p.stats.str * 2 : base + (p.stats.mag + eqSum(p, 'mag')) * 2;
+}
+const playerDef = p => eqSum(p, 'def') + p.stats.dfs + p.level * (p.voc === 'warrior' ? 0.4 : 0.2);
+const stepTime = p => Math.max(150, 260 - p.level * 2);
+
+const HAIR_STYLES = ['curto', 'longo', 'rabo'], HAIR_COLORS = ['preto', 'castanho', 'loiro', 'ruivo', 'branco', 'azul', 'rosa'];
+function cleanApp(a) { a = a || {}; return { skin: [0, 1, 2].includes(a.skin) ? a.skin : 0, hs: HAIR_STYLES.includes(a.hs) ? a.hs : 'curto', hc: HAIR_COLORS.includes(a.hc) ? a.hc : 'castanho' }; }
+function newPlayer(name, voc, pw, app) {
+  const salt = crypto.randomBytes(8).toString('hex');
+  const p = {
+    name, voc, x: SPAWN.x, y: SPAWN.y, level: 1, maxLevel: 1, xp: 0, stats: { str: 0, mag: 0, dfs: 0, vit: 0 }, points: 0, gold: 50,
+    inv: [], eq: { weapon: null, armor: 'a_cloth', helmet: null, shield: null }, app: cleanApp(app), taskIdx: 0, task: null, kills: 0, deaths: 0, salt, hash: hashPw(pw, salt)
+  };
+  if (voc === 'warrior') { p.eq.weapon = 'w_dagger'; p.eq.shield = 's_wood'; p.inv = [{ id: 'pot_hp', q: 8 }, { id: 'pot_mp', q: 2 }]; }
+  else { p.eq.weapon = 'm_wand'; p.inv = [{ id: 'pot_hp', q: 5 }, { id: 'pot_mp', q: 6 }]; }
+  p.hp = maxHp(p); p.mp = maxMp(p);
+  return p;
+}
+
+function send(p, o) { if (p.ws && p.ws.readyState === 1) p.ws.send(JSON.stringify(o)); }
+function msg(p, m, c) { send(p, { t: 'msg', m, c: c || '#fff' }); }
+function broadcast(o) { const s = JSON.stringify(o); for (const p of players.values()) if (p.ws.readyState === 1) p.ws.send(s); }
+function addFx(x, y, f) { f.x = f.x ?? x; f.y = f.y ?? y; for (const p of players.values()) if (Math.abs(p.x - x) < 14 && Math.abs(p.y - y) < 11) p.fx.push(f); }
+
+function addItem(p, id, q = 1) {
+  const it = ITEMS[id]; if (!it) return false;
+  const stack = it.type === 'potion' || it.type === 'loot';
+  if (stack) { const s = p.inv.find(s => s.id === id); if (s) { s.q += q; p.dirty = true; return true; } }
+  if (p.inv.length >= 24) { msg(p, 'Sua mochila está cheia!', '#f66'); return false; }
+  if (stack) p.inv.push({ id, q }); else for (let i = 0; i < q && p.inv.length < 24; i++) p.inv.push({ id, q: 1 });
+  p.dirty = true; return true;
+}
+function removeAt(p, slot, q = 1) { const s = p.inv[slot]; if (!s) return; s.q -= q; if (s.q <= 0) p.inv.splice(slot, 1); p.dirty = true; }
+
+function gainXp(p, amount) {
+  p.xp += amount;
+  let up = false;
+  while (p.xp >= xpFor(p.level + 1)) {
+    p.level++; up = true;
+    if (p.level > p.maxLevel) { p.points += 1; p.maxLevel = p.level; }
+  }
+  if (up) {
+    p.hp = maxHp(p); p.mp = maxMp(p); p.dirty = true;
+    addFx(p.x, p.y, { k: 'level' });
+    msg(p, `Você avançou para o nível ${p.level}!` + (p.points ? ` Você tem ${p.points} ponto(s) de atributo para distribuir.` : ''), '#ffd84a');
+    for (const sp of SPELLS[p.voc]) if (sp.lvl === p.level) msg(p, `Nova magia aprendida: ${sp.name}!`, '#9cf');
+  }
+}
+
+function playerDie(p, killer) {
+  p.deaths++;
+  addFx(p.x, p.y, { k: 'corpse', look: 'player' });
+  const lost = Math.floor(p.xp * 0.08);
+  p.xp -= lost;
+  while (p.level > 1 && p.xp < xpFor(p.level)) p.level--;
+  p.hp = maxHp(p); p.mp = maxMp(p); p.target = null; p.path = null; p.berserk = 0;
+  const pos = findFree(SPAWN.x, SPAWN.y); place(p, pos.x, pos.y);
+  msg(p, `Você morreu${killer ? ' para ' + killer : ''}! Perdeu ${lost} de experiência.`, '#f55');
+  send(p, { t: 'dead', by: killer || '' });
+  p.dirty = true;
+}
+
+// ------------------------------------------------------------------ COMBATE
+function canHit(a, t) {
+  if (!t || t.dead || !ents.has(t.id)) return false;
+  if (t.kind === 'n') return false;
+  if (isTown(a.x, a.y) || isTown(t.x, t.y)) return false;
+  if (a.kind === 'p' && t.kind === 'p') return a.level >= 8 && t.level >= 8 && a !== t;
+  return true;
+}
+function damage(t, dmg, src, color) {
+  if (dmg <= 0) { addFx(t.x, t.y, { k: 'puff' }); return; }
+  t.hp -= dmg;
+  addFx(t.x, t.y, { k: 'dmg', v: dmg, c: color || (t.kind === 'p' ? '#f33' : '#ff5050') });
+  addFx(t.x, t.y, { k: 'blood' });
+  if (t.kind === 'm') {
+    if (src && src.kind === 'p') { t.dmgBy.set(src.id, (t.dmgBy.get(src.id) || 0) + dmg); if (!t.target) t.target = src.id; }
+    if (t.hp <= 0) monDie(t, src);
+  } else if (t.kind === 'p') {
+    if (src && src.kind === 'p') { src.skull = Date.now() + 5 * 60000; t.lastPvp = src.name; }
+    if (t.hp <= 0) {
+      if (src && src.kind === 'p') { broadcast({ t: 'msg', m: `${t.name} foi derrotado por ${src.name}!`, c: '#f88' }); }
+      playerDie(t, src ? src.name : null);
+    }
+  }
+}
+function attack(a, t, mult, color) {
+  let atk = a.kind === 'p' ? playerAtk(a) : MON[a.type].atk;
+  if (a.kind === 'p' && a.berserk > Date.now()) atk *= 1.5;
+  const def = t.kind === 'p' ? playerDef(t) : MON[t.type].def;
+  let dmg = Math.round(atk * mult * (0.6 + Math.random() * 0.6) - def * (0.4 + Math.random() * 0.4));
+  if (t.kind === 'p' && a.kind === 'p') dmg = Math.round(dmg * 0.6);
+  damage(t, Math.max(0, dmg), a, color);
+}
+function monDie(m, killer) {
+  const def = MON[m.type];
+  unplace(m); ents.delete(m.id); m.dead = true;
+  addFx(m.x, m.y, { k: 'corpse', look: m.type });
+  const s = m.home; s.ent = null; s.at = Date.now() + (m.type === 'dragon' ? 240000 : 25000 + Math.random() * 30000);
+  const total = [...m.dmgBy.values()].reduce((a, b) => a + b, 0) || 1;
+  let top = null, topD = -1;
+  for (const [pid, d] of m.dmgBy) {
+    const p = players.get(pid); if (!p) continue;
+    const share = Math.max(1, Math.round(def.xp * XP_RATE * d / total));
+    gainXp(p, share); addFx(p.x, p.y, { k: 'dmg', v: share, c: '#fff', xp: true, x: p.x, y: p.y });
+    if (d > topD) { topD = d; top = p; }
+    if (p.task && p.task.mon === m.type && p.task.k < p.task.n) { p.task.k++; p.dirty = true; if (p.task.k === p.task.n) msg(p, `Missão concluída! Volte ao Mestre Aldo.`, '#9f9'); }
+  }
+  if (top) {
+    top.kills++;
+    const got = [];
+    const g = def.gold[0] + Math.floor(Math.random() * (def.gold[1] - def.gold[0] + 1));
+    if (g > 0) { top.gold += g; got.push(g + ' moedas de ouro'); }
+    for (const [id, ch] of def.loot) if (Math.random() < ch && addItem(top, id)) got.push(ITEMS[id].name);
+    msg(top, `Loot de ${def.name}: ${got.length ? got.join(', ') : 'nada'}.`, '#bbb');
+    top.dirty = true;
+  }
+}
+
+// ------------------------------------------------------------------ MOVIMENTO / PATH
+function tryMove(e, d, forMon) {
+  e.dir = d; const nx = e.x + DX[d], ny = e.y + DY[d];
+  if (!free(nx, ny, forMon)) return false;
+  place(e, nx, ny); return true;
+}
+function bfsStep(from, tx, ty, maxNodes = 2500, stopAdj = false) {
+  const start = from.y * W + from.x, goal = ty * W + tx;
+  const prev = new Map([[start, -1]]); const q = [start]; let qi = 0;
+  while (qi < q.length && prev.size < maxNodes) {
+    const cur = q[qi++]; const cx = cur % W, cy = (cur / W) | 0;
+    if (cur === goal || (stopAdj && Math.max(Math.abs(cx - tx), Math.abs(cy - ty)) <= 1)) {
+      let c = cur, p = prev.get(c); if (p === -1) return -1;
+      while (prev.get(p) !== -1) { c = p; p = prev.get(c); }
+      const nx = c % W, ny = (c / W) | 0;
+      for (let d = 0; d < 4; d++) if (from.x + DX[d] === nx && from.y + DY[d] === ny) return d;
+      return -1;
+    }
+    for (let d = 0; d < 4; d++) {
+      const nx = cx + DX[d], ny = cy + DY[d], k = ny * W + nx;
+      if (prev.has(k)) continue;
+      if (k !== goal && !free(nx, ny)) continue;
+      if (k === goal && BLOCK[get(nx, ny)]) continue;
+      prev.set(k, cur); q.push(k);
+    }
+  }
+  return -1;
+}
+function greedyStep(m, t, forMon) {
+  const dx = Math.sign(t.x - m.x), dy = Math.sign(t.y - m.y);
+  const opts = [];
+  if (Math.abs(t.x - m.x) >= Math.abs(t.y - m.y)) { if (dx) opts.push(dx > 0 ? 3 : 1); if (dy) opts.push(dy > 0 ? 0 : 2); }
+  else { if (dy) opts.push(dy > 0 ? 0 : 2); if (dx) opts.push(dx > 0 ? 3 : 1); }
+  for (const d of opts) if (tryMove(m, d, forMon)) return true;
+  return false;
+}
+
+// ------------------------------------------------------------------ IA MONSTROS
+function monTick(m, now) {
+  if (now < m.nextAct) return;
+  const def = MON[m.type];
+  let tgt = m.target ? players.get(m.target) : null;
+  if (tgt && (isTown(tgt.x, tgt.y) || cheb(m, tgt) > 10)) tgt = null;
+  if (!tgt && !def.passive) {
+    let best = 7;
+    for (const p of players.values()) { const d = cheb(m, p); if (d < best && !isTown(p.x, p.y)) { best = d; tgt = p; } }
+  }
+  m.target = tgt ? tgt.id : null;
+  if (tgt && !def.passive) {
+    const d = cheb(m, tgt), range = def.range || 1;
+    if (d <= range && now >= m.nextAtk) {
+      m.dir = Math.abs(tgt.x - m.x) > Math.abs(tgt.y - m.y) ? (tgt.x > m.x ? 3 : 1) : (tgt.y > m.y ? 0 : 2);
+      if (def.proj) addFx(m.x, m.y, { k: 'proj', tx: tgt.x, ty: tgt.y, fx: def.proj });
+      attack(m, tgt, 1);
+      m.nextAtk = now + (def.big ? 1800 : 1500);
+    }
+    if (d > range || (range > 1 && d <= 1 && Math.random() < 0.3)) greedyStep(m, tgt, true);
+    m.nextAct = now + def.spd;
+  } else {
+    if (Math.random() < 0.5) {
+      const h = m.home; let d = Math.random() * 4 | 0;
+      if (Math.abs(m.x - h.x) > 5 || Math.abs(m.y - h.y) > 5) d = Math.abs(m.x - h.x) > Math.abs(m.y - h.y) ? (h.x > m.x ? 3 : 1) : (h.y > m.y ? 0 : 2);
+      tryMove(m, d, true);
+    }
+    m.nextAct = now + def.spd * (1.5 + Math.random() * 2);
+  }
+}
+
+// ------------------------------------------------------------------ TICK JOGADOR
+function playerTick(p, now) {
+  if (now - p.lastRegen >= 2000) {
+    p.lastRegen = now;
+    const mh = maxHp(p), mm = maxMp(p), town = isTown(p.x, p.y) ? 2 : 1;
+    p.hp = Math.min(mh, p.hp + Math.ceil(mh * 0.012) * town + 1);
+    p.mp = Math.min(mm, p.mp + Math.ceil(mm * 0.02) * town + 1);
+  }
+  let t = p.target ? ents.get(p.target) : null;
+  if (p.target && (!t || t.dead || (t.kind === 'p' && !canHit(p, t)) || cheb(p, t) > 12)) { p.target = null; t = null; }
+  const range = VOC[p.voc].range;
+  if (!t && !isTown(p.x, p.y)) {
+    for (const [dx, dy] of [[0, 1], [-1, 0], [0, -1], [1, 0], [1, 1], [-1, 1], [1, -1], [-1, -1]]) {
+      const e = occ.get((p.y + dy) * W + p.x + dx);
+      if (e && e.kind === 'm' && !MON[e.type].passive) { p.target = e.id; t = e; break; }
+    }
+  }
+  if (now >= p.nextMove) {
+    if (p.walkDir >= 0) {
+      p.path = null;
+      if (tryMove(p, p.walkDir)) p.nextMove = now + stepTime(p);
+      else { p.dir = p.walkDir; const e = occ.get((p.y + DY[p.walkDir]) * W + p.x + DX[p.walkDir]); if (e && e.kind === 'm' && !isTown(p.x, p.y)) { p.target = e.id; t = e; } }
+    }
+    else if (p.goto) {
+      if (p.x === p.goto.x && p.y === p.goto.y) p.goto = null;
+      else { const d = bfsStep(p, p.goto.x, p.goto.y, 3000, p.goto.adj); if (d >= 0 && tryMove(p, d)) p.nextMove = now + stepTime(p); else p.goto = null; }
+    }
+    else if (t && cheb(p, t) > range) {
+      const d = bfsStep(p, t.x, t.y, 1500, true);
+      if (d >= 0 && tryMove(p, d)) p.nextMove = now + stepTime(p);
+    }
+  }
+  if (t && now >= p.nextAtk && cheb(p, t) <= range && canHit(p, t)) {
+    p.dir = Math.abs(t.x - p.x) > Math.abs(t.y - p.y) ? (t.x > p.x ? 3 : 1) : (t.y > p.y ? 0 : 2);
+    if (p.voc === 'wizard') addFx(p.x, p.y, { k: 'proj', tx: t.x, ty: t.y, fx: 'arcane' });
+    else addFx(t.x, t.y, { k: 'slash' });
+    attack(p, t, 1);
+    p.nextAtk = now + VOC[p.voc].atkSpeed;
+  }
+}
+
+// ------------------------------------------------------------------ AÇÕES
+function castSpell(p, id) {
+  const sp = SPELLS[p.voc].find(s => s.id === id); if (!sp) return;
+  const now = Date.now();
+  if (p.level < sp.lvl) return msg(p, `Você precisa do nível ${sp.lvl} para usar ${sp.name}.`, '#f88');
+  if ((p.cds[id] || 0) > now) return;
+  if (p.mp < sp.mp) return msg(p, 'Mana insuficiente.', '#88f');
+  let t = p.target ? ents.get(p.target) : null;
+  if ((sp.type === 'melee' || sp.type === 'target') && (!t || !canHit(p, t))) {
+    let bd = 99; t = null;
+    for (const e of ents.values()) if (e.kind === 'm' && !MON[e.type].passive) { const d = cheb(p, e); if (d <= (sp.range || 1) && d < bd) { bd = d; t = e; } }
+    if (t) p.target = t.id;
+  }
+  if (sp.type === 'melee' || sp.type === 'target') {
+    const range = sp.range || 1;
+    if (!t || !canHit(p, t)) return msg(p, 'Selecione um alvo primeiro.', '#f88');
+    if (cheb(p, t) > range) return msg(p, 'Alvo muito longe.', '#f88');
+    if (sp.type === 'target') addFx(p.x, p.y, { k: 'proj', tx: t.x, ty: t.y, fx: sp.fx });
+    else addFx(t.x, t.y, { k: 'area', fx: 'strike' });
+    attack(p, t, sp.mult, sp.fx === 'ice' ? '#7df' : sp.fx === 'fire' ? '#fa3' : null);
+  } else if (sp.type === 'heal') {
+    const v = Math.round(sp.base + sp.scale * p.level + p.stats.mag * 3);
+    p.hp = Math.min(maxHp(p), p.hp + v);
+    addFx(p.x, p.y, { k: 'heal' }); addFx(p.x, p.y, { k: 'dmg', v: '+' + v, c: '#4af' });
+  } else if (sp.type === 'area') {
+    if (isTown(p.x, p.y)) return msg(p, 'Não é permitido atacar na cidade.', '#f88');
+    const r = sp.radius;
+    for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+      if (!dx && !dy) continue; if (dx * dx + dy * dy > r * r + 1) continue;
+      addFx(p.x + dx, p.y + dy, { k: 'area', fx: sp.fx });
+      const e = occ.get((p.y + dy) * W + p.x + dx);
+      if (e && e !== p && (e.kind === 'm' || (e.kind === 'p' && p.target === e.id)) && canHit(p, e)) attack(p, e, sp.mult);
+    }
+  } else if (sp.type === 'buff') {
+    p.berserk = now + sp.dur; addFx(p.x, p.y, { k: 'area', fx: 'berserk' }); msg(p, 'Você entrou em fúria!', '#f84');
+  }
+  p.mp -= sp.mp; p.cds[id] = now + sp.cd;
+}
+
+function useItem(p, slot) {
+  const s = p.inv[slot]; if (!s) return;
+  const it = ITEMS[s.id];
+  if (it.type === 'potion') {
+    if ((p.potCd || 0) > Date.now()) return;
+    p.potCd = Date.now() + 800;
+    if (it.hp) { p.hp = Math.min(maxHp(p), p.hp + it.hp); addFx(p.x, p.y, { k: 'dmg', v: '+' + it.hp, c: '#4f4' }); }
+    if (it.mp) { p.mp = Math.min(maxMp(p), p.mp + it.mp); addFx(p.x, p.y, { k: 'dmg', v: '+' + it.mp, c: '#68f' }); }
+    addFx(p.x, p.y, { k: 'heal' });
+    removeAt(p, slot);
+  } else if (['weapon', 'armor', 'helmet', 'shield'].includes(it.type)) {
+    if (it.voc && it.voc !== p.voc) return msg(p, `Apenas ${VOC[it.voc].name}s podem usar isso.`, '#f88');
+    if (it.lvl > p.level) return msg(p, `Você precisa do nível ${it.lvl}.`, '#f88');
+    const old = p.eq[it.type]; p.inv.splice(slot, 1); p.eq[it.type] = s.id;
+    if (old) p.inv.push({ id: old, q: 1 });
+    msg(p, `Você equipou ${it.name}.`, '#cfc');
+    p.hp = Math.min(p.hp, maxHp(p)); p.mp = Math.min(p.mp, maxMp(p)); p.dirty = true;
+  }
+}
+function nearNpc(p, kind) { for (const e of ents.values()) if (e.kind === 'n' && cheb(p, e) <= 3 && (!kind || e.npc.shop === kind || e.npc.id === kind)) return e; return null; }
+
+function talkNpc(p, e) {
+  const n = e.npc;
+  if (cheb(p, e) > 3) { p.goto = { x: e.x, y: e.y, adj: true }; p.pendingNpc = e.id; return; }
+  if (n.shop) {
+    send(p, { t: 'shop', npc: n.id, name: n.name, greet: n.greet, items: SHOPS[n.shop] });
+  } else if (n.quest) {
+    let text;
+    if (!p.task) {
+      const tk = TASKS[p.taskIdx];
+      if (!tk) text = 'Você completou todas as minhas missões, herói! Seu nome será lembrado.';
+      else { p.task = { mon: tk.mon, n: tk.n, k: 0 }; p.dirty = true; text = `Preciso da sua ajuda! Derrote ${tk.n} ${MON[tk.mon].name}(s) e volte aqui. Recompensa: ${tk.gold} ouro, ${tk.xp * XP_RATE} XP e ${tk.q ? tk.q + 'x ' : ''}${ITEMS[tk.item].name}.`; }
+    } else if (p.task.k >= p.task.n) {
+      const tk = TASKS[p.taskIdx];
+      p.gold += tk.gold; addItem(p, tk.item, tk.q || 1); gainXp(p, tk.xp * XP_RATE);
+      p.taskIdx++; p.task = null; p.dirty = true;
+      text = `Excelente trabalho! Aqui está sua recompensa: ${tk.gold} ouro e ${ITEMS[tk.item].name}. Fale comigo de novo para outra missão.`;
+    } else text = `Você ainda precisa derrotar ${p.task.n - p.task.k} ${MON[p.task.mon].name}(s). Não desista!`;
+    send(p, { t: 'dialog', name: n.name, text });
+  } else if (n.talk) {
+    send(p, { t: 'dialog', name: n.name, text: n.talk[Math.random() * n.talk.length | 0] });
+  }
+}
+
+// ------------------------------------------------------------------ REDE
+const tilesB64 = Buffer.from(tiles).toString('base64');
+const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'application/javascript; charset=utf-8', '.css': 'text/css', '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json', '.jpg': 'image/jpeg', '.webmanifest': 'application/manifest+json', '.ttf': 'font/ttf', '.svg': 'image/svg+xml' };
+const server = http.createServer((req, res) => {
+  let u = decodeURIComponent(req.url.split('?')[0]); if (u === '/') u = '/index.html';
+  if (u === '/health') { res.writeHead(200); return res.end('ok'); }
+  const f = path.join(__dirname, 'public', path.normalize(u).replace(/^(\.\.[\/\\])+/, ''));
+  if (!f.startsWith(path.join(__dirname, 'public'))) { res.writeHead(403); return res.end(); }
+  fs.readFile(f, (err, data) => {
+    if (err) { res.writeHead(404); return res.end('404'); }
+    res.writeHead(200, { 'Content-Type': MIME[path.extname(f)] || 'application/octet-stream', 'Cache-Control': u.startsWith('/assets/') ? 'public, max-age=86400' : 'no-cache' }); res.end(data);
+  });
+});
+const wss = new WebSocketServer({ server });
+
+wss.on('connection', ws => {
+  let p = null;
+  ws.on('message', raw => {
+    let m; try { m = JSON.parse(raw); } catch (e) { return; }
+    if (!p) {
+      if (m.t !== 'login') return;
+      const name = String(m.name || '').trim().replace(/\s+/g, ' ');
+      const pw = String(m.pass || '');
+      if (!/^[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ ]{2,15}$/.test(name)) return ws.send(JSON.stringify({ t: 'err', m: 'Nome inválido (3-16 letras).' }));
+      if (pw.length < 3) return ws.send(JSON.stringify({ t: 'err', m: 'Senha muito curta (mín. 3).' }));
+      const key = name.toLowerCase();
+      let data = db[key];
+      if (m.create) {
+        if (data) return ws.send(JSON.stringify({ t: 'err', m: 'Esse nome já está em uso. Escolha outro.' }));
+        if (!VOC[m.voc]) return ws.send(JSON.stringify({ t: 'err', m: 'Escolha uma vocação.' }));
+        data = newPlayer(name, m.voc, pw, m.app);
+      } else {
+        if (!data) return ws.send(JSON.stringify({ t: 'err', m: 'Personagem não encontrado. Crie um novo personagem.' }));
+        if (hashPw(pw, data.salt) !== data.hash) return ws.send(JSON.stringify({ t: 'err', m: 'Senha incorreta para este personagem.' }));
+      }
+      for (const o of players.values()) if (o.name.toLowerCase() === key) { send(o, { t: 'err', m: 'Conectado em outro lugar.' }); o.ws.close(); leave(o); }
+      p = Object.assign({}, data, { id: nextId++, kind: 'p', ws, dir: 0, walkDir: -1, nextMove: 0, nextAtk: 0, lastRegen: Date.now(), cds: {}, fx: [], dirty: true, target: null, skull: 0, berserk: 0 });
+      p.stats = Object.assign({ str: 0, mag: 0, dfs: 0, vit: 0 }, p.stats); p.app = cleanApp(p.app);
+      const pos = (walkable(p.x, p.y) && !isTown(p.x, p.y)) || isTown(p.x, p.y) ? findFree(p.x, p.y) : findFree(SPAWN.x, SPAWN.y);
+      place(p, pos.x, pos.y); ents.set(p.id, p); players.set(p.id, p); persist(p);
+      ws.send(JSON.stringify({ t: 'welcome', id: p.id, W, H, tiles: tilesB64, xpRate: XP_RATE }));
+      msg(p, `Bem-vindo(a) a As Aventuras do Piper, ${p.name}! Fale com o Mestre Aldo (no centro da cidade) para missões.`, '#ffd84a');
+      broadcast({ t: 'msg', m: `${p.name} entrou no jogo.`, c: '#8c8' });
+      return;
+    }
+    switch (m.t) {
+      case 'walk': p.walkDir = [0, 1, 2, 3].includes(m.d) ? m.d : -1; if (p.walkDir >= 0) { p.goto = null; } break;
+      case 'goto': if (Number.isInteger(m.x) && Number.isInteger(m.y) && Math.abs(m.x - p.x) < 20 && Math.abs(m.y - p.y) < 20) p.goto = { x: m.x, y: m.y }; break;
+      case 'target': {
+        const e = ents.get(m.id);
+        if (!e || e === p) { p.target = null; break; }
+        if (e.kind === 'n') { talkNpc(p, e); break; }
+        if (e.kind === 'p' && !canHit(p, e)) { msg(p, isTown(p.x, p.y) || isTown(e.x, e.y) ? 'Não é permitido atacar na cidade.' : 'PvP só é permitido entre jogadores de nível 8+.', '#f88'); break; }
+        if (isTown(p.x, p.y)) { msg(p, 'Você está em zona protegida.', '#f88'); }
+        p.target = p.target === e.id ? null : e.id; p.goto = null; break;
+      }
+      case 'nearest': {
+        let best = null, bd = 99;
+        for (const e of ents.values()) if (e.kind === 'm' && !MON[e.type].passive) { const d = cheb(p, e); if (d < bd && d <= 8) { bd = d; best = e; } }
+        if (best) p.target = best.id; break;
+      }
+      case 'spell': castSpell(p, String(m.s)); break;
+      case 'use': useItem(p, m.slot | 0); break;
+      case 'quick': { const ids = m.k === 'hp' ? ['pot_hp2', 'pot_hp'] : ['pot_mp2', 'pot_mp'];
+        const want = m.k === 'hp' ? (maxHp(p) - p.hp > 200 ? ids : ids.slice().reverse()) : (maxMp(p) - p.mp > 150 ? ids : ids.slice().reverse());
+        for (const id of want) { const i = p.inv.findIndex(s => s.id === id); if (i >= 0) { useItem(p, i); break; } } break; }
+      case 'unequip': { const slot = m.slot; if (p.eq[slot] && p.inv.length < 24) { p.inv.push({ id: p.eq[slot], q: 1 }); p.eq[slot] = null; p.hp = Math.min(p.hp, maxHp(p)); p.dirty = true; } break; }
+      case 'stat': if (STATS[m.s] && p.points > 0) { p.points--; p.stats[m.s]++; p.dirty = true; } break;
+      case 'buy': {
+        const e = nearNpc(p); if (!e || !e.npc.shop) return msg(p, 'Fique perto do vendedor.', '#f88');
+        const id = m.item, q = Math.max(1, Math.min(100, m.q | 0 || 1));
+        if (!SHOPS[e.npc.shop].includes(id)) return;
+        const cost = ITEMS[id].price * q;
+        if (p.gold < cost) return msg(p, 'Ouro insuficiente.', '#f88');
+        if (addItem(p, id, q)) { p.gold -= cost; msg(p, `Você comprou ${q}x ${ITEMS[id].name} por ${cost} ouro.`, '#cfc'); }
+        break;
+      }
+      case 'sell': {
+        const e = nearNpc(p); if (!e || !e.npc.shop) return msg(p, 'Fique perto de um comerciante.', '#f88');
+        const s = p.inv[m.slot | 0]; if (!s) break;
+        const q = m.all ? s.q : 1, v = D.sellPrice(s.id) * q;
+        p.gold += v; msg(p, `Você vendeu ${q}x ${ITEMS[s.id].name} por ${v} ouro.`, '#cfc'); removeAt(p, m.slot | 0, q);
+        break;
+      }
+      case 'chat': {
+        const text = String(m.m || '').slice(0, 140).trim(); if (!text) break;
+        if (text === '/online') { msg(p, 'Online: ' + [...players.values()].map(o => `${o.name} (${o.level})`).join(', '), '#9cf'); break; }
+        broadcast({ t: 'chat', id: p.id, name: p.name, lv: p.level, m: text });
+        break;
+      }
+    }
+  });
+  ws.on('close', () => { if (p) leave(p); });
+});
+function leave(p) {
+  if (!players.has(p.id)) return;
+  persist(p); saveDb();
+  unplace(p); ents.delete(p.id); players.delete(p.id);
+  broadcast({ t: 'msg', m: `${p.name} saiu do jogo.`, c: '#888' });
+}
+
+// ------------------------------------------------------------------ LOOP
+setInterval(() => {
+  const now = Date.now();
+  for (const s of spawns) if (!s.ent && now >= s.at) spawnMon(s);
+  for (const e of ents.values()) {
+    if (e.kind !== 'm') continue;
+    let near = false; for (const p of players.values()) if (cheb(e, p) < 18) { near = true; break; }
+    if (near) monTick(e, now); else if (e.target) e.target = null;
+  }
+  for (const p of players.values()) {
+    playerTick(p, now);
+    if (p.pendingNpc && !p.goto) { const e = ents.get(p.pendingNpc); p.pendingNpc = null; if (e && cheb(p, e) <= 3) talkNpc(p, e); }
+  }
+  // enviar estado
+  for (const p of players.values()) {
+    const list = [];
+    for (const e of ents.values()) {
+      if (Math.abs(e.x - p.x) > 12 || Math.abs(e.y - p.y) > 9) continue;
+      const hpPct = e.kind === 'n' ? 100 : Math.max(0, Math.round(100 * e.hp / (e.kind === 'p' ? maxHp(e) : e.mhp)));
+      let look = e.look;
+      if (e.kind === 'p') look = ['c', e.voc, e.eq.armor || '', e.eq.helmet || '', e.eq.weapon || '', e.eq.shield || '', e.app.skin, e.app.hs, e.app.hc, ''].join('|');
+      list.push([e.id, e.kind, e.x, e.y, e.dir, look, e.name, hpPct, e.kind === 'p' ? (e.skull > now ? 1 : 0) | (e.berserk > now ? 2 : 0) : 0, e.kind === 'p' ? e.level : 0]);
+    }
+    const cds = {}; for (const k in p.cds) if (p.cds[k] > now) cds[k] = p.cds[k] - now;
+    const me = { x: p.x, y: p.y, hp: p.hp, mhp: maxHp(p), mp: p.mp, mmp: maxMp(p), lv: p.level, xp: p.xp, xpa: xpFor(p.level), xpb: xpFor(p.level + 1), gold: p.gold, tg: p.target, cds, voc: p.voc, town: isTown(p.x, p.y), berserk: Math.max(0, p.berserk - now) };
+    if (p.dirty) { Object.assign(me, { inv: p.inv, eq: p.eq, st: p.stats, pts: p.points, atk: Math.round(playerAtk(p)), def: Math.round(playerDef(p)), task: p.task, name: p.name }); p.dirty = false; }
+    send(p, { t: 's', me, e: list, fx: p.fx });
+    p.fx = [];
+  }
+}, TICK);
+
+setInterval(() => { for (const p of players.values()) persist(p); saveDb(); }, 30000);
+function shutdown() { for (const p of players.values()) persist(p); saveDb(); process.exit(0); }
+process.on('SIGINT', shutdown); process.on('SIGTERM', shutdown);
+
+server.listen(PORT, '0.0.0.0', () => console.log(`As Aventuras do Piper rodando em http://localhost:${PORT}`));

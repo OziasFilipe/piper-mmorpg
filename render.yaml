@@ -1,0 +1,30 @@
+# Render.com Blueprint — As Aventuras do Piper (Epiper Tecnologia)
+# Este arquivo precisa ficar na RAIZ do repositório (github.com/OziasFilipe/piper-mmorpg).
+# No Render: New + > Blueprint > escolha o repositório piper-mmorpg > Apply.
+services:
+  - type: web
+    name: aventuras-do-piper
+    runtime: node
+    plan: free                 # "starter" = não dorme e permite disco persistente
+    region: virginia           # região mais próxima do Brasil
+    branch: main
+    autoDeploy: true           # cada push na branch main publica de novo
+    buildCommand: npm install --omit=dev
+    startCommand: node server.js
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: NODE_ENV
+        value: production
+      - key: XP_RATE
+        value: "2"
+      # ---- Para NÃO perder os personagens (somente plano pago "starter") ----
+      # 1) troque plan: free por plan: starter
+      # 2) descomente as 2 linhas abaixo e o bloco "disk"
+      # - key: DATA_DIR
+      #   value: /var/data
+    # disk:
+    #   name: dados-jogadores
+    #   mountPath: /var/data
+    #   sizeGB: 1
