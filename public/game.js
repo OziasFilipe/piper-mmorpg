@@ -125,10 +125,16 @@
   let connecting = false, errEl = null, connTimer = null;
   // Conexão robusta: primeiro "acorda" o servidor (no plano grátis do Render ele dorme
   // e leva até ~1 min para voltar), depois abre o WebSocket com tempo-limite e novas tentativas.
+  // Endereço do servidor do jogo. Vazio = o mesmo site (VPS/Docker/Render).
+  // Na Vercel, o config.js aponta para o servidor da VPS (ex.: https://jogo.seudominio.com.br).
+  const SERVER = String(window.PIPER_SERVER || '').trim().replace(/\/$/, '');
+  const HTTP_BASE = SERVER ? SERVER + '/' : '';
+  const WS_URL = SERVER ? SERVER.replace(/^http/i, 'ws') : (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
+  let lastErr = '';   // motivo da desconexão (ex.: expulso pelo administrador)
   async function wakeServer(onWait) {
     const t0 = Date.now();
     for (let i = 0; Date.now() - t0 < 90000; i++) {
-      try { const r = await fetch('health?t=' + Date.now(), { cache: 'no-store' }); if (r.ok) return true; } catch (e) { }
+      try { const r = await fetch(HTTP_BASE + 'health?t=' + Date.now(), { cache: 'no-store' }); if (r.ok) return true; } catch (e) { }
       onWait(Math.round((Date.now() - t0) / 1000));
       await new Promise(r => setTimeout(r, 2000));
     }
@@ -143,7 +149,7 @@
     if (!ok) { connecting = false; errEl.textContent = 'Servidor fora do ar. Tente novamente em instantes.'; return; }
     errEl.textContent = 'Conectando...';
     if (ws) try { ws.onclose = null; ws.close(); } catch (e) { }
-    const sock = ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host);
+    const sock = ws = new WebSocket(WS_URL);
     clearTimeout(connTimer);
     connTimer = setTimeout(() => { if (sock.readyState !== 1 && !inGame) { sock.onclose = null; try { sock.close(); } catch (e) { }
       if (attempt < 3) { errEl.textContent = 'Tentando de novo...'; connect(create, attempt + 1); } else { connecting = false; errEl.textContent = 'Não foi possível conectar. Verifique sua internet.'; } } }, 12000);
@@ -152,7 +158,7 @@
     sock.onerror = () => { };
     sock.onclose = () => {
       clearTimeout(connTimer); connecting = false;
-      if (inGame) { inGame = false; playMusic('title'); show('game', false); show('title', true); $('authErr').textContent = 'Conexão perdida. Entre novamente.'; setTab('login'); }
+      if (inGame) { inGame = false; playMusic('title'); show('game', false); show('title', true); $('authErr').textContent = lastErr || 'Conexão perdida. Entre novamente.'; lastErr = ''; setTab('login'); }
       else if (errEl && /Conectando/.test(errEl.textContent)) errEl.textContent = 'Não foi possível conectar ao servidor.';
     };
   }
@@ -160,7 +166,7 @@
 
   function onMsg(m) {
     switch (m.t) {
-      case 'err': if (!inGame) { errEl.textContent = m.m; connecting = false; } else addLog(m.m, '#ff8a8a'); break;
+      case 'err': if (!inGame) { errEl.textContent = m.m; connecting = false; } else { addLog(m.m, '#ff8a8a'); lastErr = m.m; } break;
       case 'welcome': {
         myId = m.id; loadRegion(m); inGame = true; connecting = false; ents.clear(); fxs = []; $('feed').innerHTML = ''; $('chatLog').innerHTML = '';
         show('title', false); show('game', true); resize(); break;
@@ -310,7 +316,7 @@
     const w = innerWidth, h = innerHeight;
     // Não usamos apenas a largura: um notebook estreito continua com controles
     // de teclado e arte no tamanho padrão. O aumento é exclusivo de toque real.
-    mobileMode = matchMedia('(hover: none) and (pointer: coarse)').matches;
+    mobileMode = document.documentElement.classList.contains('touch');   // mesma regra do index.html (celular x computador)
     cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
     const Z = Math.max(h / 11, w / 22);       // px CSS por tile
     K = Z * dpr / TS; UI = TS / Z;            // UI: px de mundo por px CSS

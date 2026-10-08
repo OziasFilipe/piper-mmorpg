@@ -24,7 +24,8 @@ Acesse a VPS pelo SSH (`ssh root@IP_DA_VPS`) e rode:
 ```bash
 git clone https://github.com/OziasFilipe/piper-mmorpg.git piper
 cd piper
-echo "DOMINIO=jogo.seudominio.com.br" > .env    # troque pelo SEU endereço (ou 203-0-113-10.sslip.io)
+echo "DOMINIO=jogo.seudominio.com.br" > .env          # troque pelo SEU endereço (ou 203-0-113-10.sslip.io)
+echo "ADMIN_PASSWORD=troque-por-uma-senha-forte" >> .env   # senha do painel admin
 docker compose up -d --build
 ```
 
@@ -37,6 +38,18 @@ docker compose ps              # os dois devem estar "running" (o jogo fica "hea
 docker compose logs -f jogo    # log do jogo (Ctrl+C para sair)
 docker compose logs caddy      # se o HTTPS falhar, o motivo aparece aqui
 ```
+
+## Painel admin
+
+Abra `https://SEU_ENDERECO/admin` e entre com a senha do `ADMIN_PASSWORD`. No painel você vê:
+
+- **Visão geral:** quantos estão online, cadastrados, entradas e mortes do dia, memória e velocidade do servidor, gráfico de online.
+- **Online:** quem está jogando, onde está, nível, IP e há quanto tempo. Dá para mandar mensagem ou expulsar.
+- **Jogadores:** todos os cadastrados (busca, ordenação, só bloqueados). Tocando num jogador: equipamento, mochila, amigos, histórico, dar/tirar ouro, redefinir senha e bloquear/desbloquear a conta.
+- **Log:** entradas, cadastros, saídas, chat, mortes, níveis, viagens, amizades, senhas erradas, ações do admin e erros (guardado por 60 dias).
+- **Aviso geral:** mensagem para todos que estão online.
+
+Para trocar a senha: edite o `.env` e rode `docker compose up -d`. Use uma senha forte: depois de 8 tentativas erradas o painel bloqueia aquele IP por 10 minutos.
 
 ## 3. Atualizar o jogo (depois de cada Push no GitHub)
 

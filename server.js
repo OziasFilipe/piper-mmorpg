@@ -269,6 +269,29 @@ function migrateLegacyPlayers() {
   } catch (e) { console.error('migração players.json -> SQLite', e); }
 }
 migrateLegacyPlayers();
+
+// ------------------------------------------------------------------ ADMIN: dados extras + LOG
+// Colunas novas na tabela de jogadores (criadas uma vez, sem apagar nada).
+(() => {
+  const cols = new Set(db.prepare('PRAGMA table_info(players)').all().map(c => c.name));
+  for (const [c, def] of [['last_login', 'TEXT'], ['last_ip', 'TEXT'], ['logins', 'INTEGER NOT NULL DEFAULT 0'], ['play_seconds', 'INTEGER NOT NULL DEFAULT 0'], ['banned', 'INTEGER NOT NULL DEFAULT 0'], ['ban_reason', 'TEXT']])
+    if (!cols.has(c)) db.exec(`ALTER TABLE players ADD COLUMN ${c} ${def}`);
+})();
+db.exec(`
+  CREATE TABLE IF NOT EXISTS logs (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, type TEXT NOT NULL, player TEXT, ip TEXT, msg TEXT);
+  CREATE INDEX IF NOT EXISTS idx_logs_ts ON logs(ts);
+  CREATE INDEX IF NOT EXISTS idx_logs_type ON logs(type, ts);
+  CREATE INDEX IF NOT EXISTS idx_logs_player ON logs(player COLLATE NOCASE, ts);
+`);
+const insLog = db.prepare('INSERT INTO logs (ts, type, player, ip, msg) VALUES (?, ?, ?, ?, ?)');
+// tipos: start, create, login, logout, auth (senha errada), ban, death, level, chat, travel, friend, admin, error
+function logEv(type, player, text, ip) { try { insLog.run(Date.now(), type, player || null, ip || null, String(text || '').slice(0, 500)); } catch (e) { } }
+const getMeta = db.prepare('SELECT banned, ban_reason FROM players WHERE username = ?');
+const touchLogin = db.prepare("UPDATE players SET last_login = ?, last_ip = ?, logins = logins + 1 WHERE username = ?");
+const addPlayTime = db.prepare('UPDATE players SET play_seconds = play_seconds + ? WHERE username = ?');
+function pruneLogs() { try { db.prepare('DELETE FROM logs WHERE ts < ?').run(Date.now() - 60 * 864e5); } catch (e) { } }   // guarda 60 dias
+pruneLogs(); setInterval(pruneLogs, 864e5);
+const clientIp = req => String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() || (req.socket && req.socket.remoteAddress || '').replace(/^::ffff:/, '');
 const hashPw = (pw, salt) => crypto.createHash('sha256').update(salt + ':' + pw).digest('hex');
 
 // ------------------------------------------------------------------ JOGADOR
@@ -332,6 +355,7 @@ function gainXp(p, amount) {
     const aps = (1000 / attackDelay(p)).toFixed(2).replace('.', ',');
     msg(p, `Você avançou para o nível ${p.level}! Ataque básico: ${aps}/s.` + (p.points ? ` Você tem ${p.points} ponto(s) de atributo para distribuir.` : ''), '#ffd84a');
     for (const sp of SPELLS[p.voc]) if (sp.lvl === p.level) msg(p, `Nova magia aprendida: ${sp.name}!`, '#9cf');
+    logEv('level', p.name, `Subiu para o nível ${p.level}`, p.ip);
   }
 }
 
@@ -344,6 +368,7 @@ function playerDie(p, killer) {
   p.hp = maxHp(p); p.mp = maxMp(p); p.target = null; p.path = null; p.berserk = 0;
   const sp = spawnOf(regionOf(p.x)), pos = findFree(sp.x, sp.y); place(p, pos.x, pos.y);
   msg(p, `Você morreu${killer ? ' para ' + killer : ''}! Perdeu ${lost} de experiência.`, '#f55');
+  logEv('death', p.name, `Morreu${killer ? ' para ' + killer : ''} (nível ${p.level})`, p.ip);
   send(p, { t: 'dead', by: killer || '' });
   p.dirty = true;
 }
@@ -625,6 +650,7 @@ function portalTravel(p, pt) {
   msg(p, `Você atravessou o portal e chegou em ${reg.name}.`, '#d8a8ff');
 }
 function moveToRegion(p, to, x, y) {
+  logEv('travel', p.name, `Viajou de ${REGIONS[regionOf(p.x)].name} para ${REGIONS[to].name}`, p.ip);
   send(p, { t: 'loading', to });                       // celular mostra a tela de carregamento
   p.target = null; p.goto = null; p.walkDir = -1; p.pendingNpc = null; p.dirty = true; p.autoTarget = false;
   p.safeUntil = Date.now() + 4000;                     // 4 s sem ser atacado enquanto carrega
@@ -655,10 +681,149 @@ function loadFile(f) {
   c = { mtime: st.mtimeMs, size: st.size, data, gz: GZ.has(ext) ? zlib.gzipSync(data, { level: 9 }) : null, etag: '"' + crypto.createHash('sha1').update(data).digest('base64').slice(0, 20) + '"', type: MIME[ext] || 'application/octet-stream' };
   fileCache.set(f, c); return c;
 }
+// ------------------------------------------------------------------ PAINEL ADMIN (/admin)
+// Senha na variável ADMIN_PASSWORD. Sem ela, o painel fica desligado.
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
+const adminTokens = new Map(), adminTries = new Map();
+const onlineHist = [];   // jogadores online a cada minuto (últimas 24 h)
+let peakToday = 0, peakDay = new Date().toDateString();
+setInterval(() => {
+  onlineHist.push([Date.now(), players.size]); if (onlineHist.length > 1440) onlineHist.shift();
+  const d = new Date().toDateString(); if (d !== peakDay) { peakDay = d; peakToday = 0; }
+}, 60000);
+setInterval(() => { if (players.size > peakToday) peakToday = players.size; }, 5000);
+function adminSend(res, code, obj) {
+  res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Content-Type, Authorization', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS' });
+  res.end(JSON.stringify(obj));
+}
+function readBody(req) {
+  return new Promise((ok, fail) => { let b = ''; req.on('data', c => { b += c; if (b.length > 20000) { fail(new Error('grande demais')); req.destroy(); } }); req.on('end', () => { try { ok(b ? JSON.parse(b) : {}); } catch (e) { ok({}); } }); req.on('error', fail); });
+}
+const sameSecret = (a, b) => { const x = crypto.createHash('sha256').update(String(a)).digest(), y = crypto.createHash('sha256').update(String(b)).digest(); return crypto.timingSafeEqual(x, y); };
+const regionName = x => REGIONS[regionOf(x)].name;
+function findAny(name) {
+  const key = String(name || '').trim().toLowerCase(); if (!key) return {};
+  for (const o of players.values()) if (o.name.toLowerCase() === key) return { online: o, key };
+  const data = loadPlayer(key); return data ? { data, key } : {};
+}
+async function adminApi(req, res, u) {
+  try {
+    if (req.method === 'OPTIONS') return adminSend(res, 204, {});
+    if (!ADMIN_PASSWORD) return adminSend(res, 503, { error: 'Painel desligado: defina a variável ADMIN_PASSWORD no servidor.' });
+    const ip = clientIp(req), now = Date.now(), route = u.slice('/admin/api/'.length);
+    if (route === 'login' && req.method === 'POST') {
+      const t = adminTries.get(ip) || []; const recent = t.filter(x => now - x < 600000);
+      if (recent.length >= 8) return adminSend(res, 429, { error: 'Muitas tentativas. Espere 10 minutos.' });
+      const body = await readBody(req);
+      if (!sameSecret(body.password || '', ADMIN_PASSWORD)) { recent.push(now); adminTries.set(ip, recent); logEv('admin', null, 'Senha do painel incorreta', ip); return adminSend(res, 401, { error: 'Senha incorreta.' }); }
+      adminTries.delete(ip);
+      const token = crypto.randomBytes(24).toString('hex'); adminTokens.set(token, now + 12 * 3600e3);
+      logEv('admin', null, 'Entrou no painel admin', ip);
+      return adminSend(res, 200, { token });
+    }
+    const tok = String(req.headers.authorization || '').replace(/^Bearer\s+/i, ''), exp = adminTokens.get(tok);
+    if (!exp || exp < now) { adminTokens.delete(tok); return adminSend(res, 401, { error: 'Sessão expirada. Entre de novo.' }); }
+    const q = new URL(req.url, 'http://x').searchParams;
+    if (req.method === 'GET') {
+      if (route === 'stats') {
+        const day0 = new Date(); day0.setHours(0, 0, 0, 0);
+        const users = db.prepare('SELECT COUNT(*) n FROM players').get().n;
+        const newToday = db.prepare('SELECT COUNT(*) n FROM players WHERE created_at >= ?').get(day0.toISOString().replace('T', ' ').slice(0, 19)).n;
+        const banned = db.prepare('SELECT COUNT(*) n FROM players WHERE banned = 1').get().n;
+        const cnt = type => db.prepare('SELECT COUNT(*) n FROM logs WHERE type = ? AND ts >= ?').get(type, day0.getTime()).n;
+        const byRegion = REGIONS.map(r => ({ name: r.name, n: 0 })); for (const o of players.values()) byRegion[regionOf(o.x)].n++;
+        const mem = process.memoryUsage();
+        return adminSend(res, 200, {
+          uptime: Math.round((now - BOOT) / 1000), online: players.size, peakToday: Math.max(peakToday, players.size), users, newToday, banned,
+          loginsToday: cnt('login') + cnt('create'), deathsToday: cnt('death'), chatsToday: cnt('chat'),
+          monsters: [...ents.values()].filter(e => e.kind === 'm').length, byRegion,
+          memMB: Math.round(mem.rss / 1048576), heapMB: Math.round(mem.heapUsed / 1048576),
+          tickAvg: +(perf.sum / (perf.n || 1)).toFixed(2), tickMax: perf.max, node: process.version, xpRate: XP_RATE, history: onlineHist.slice(-180)
+        });
+      }
+      if (route === 'online') {
+        return adminSend(res, 200, [...players.values()].map(o => ({ name: o.name, voc: VOC[o.voc].name, level: o.level, hp: o.hp, mhp: maxHp(o), gold: o.gold, region: regionName(o.x), x: o.x - regionOf(o.x) * W, y: o.y, town: isTown(o.x, o.y), ip: o.ip, since: o.since, friends: o.friends.length })).sort((a, b) => b.level - a.level));
+      }
+      if (route === 'users') {
+        const term = '%' + (q.get('q') || '').trim() + '%', page = Math.max(0, +q.get('page') || 0), size = 50;
+        const SORTS = { recent: 'last_login DESC', created: 'created_at DESC', level: "CAST(json_extract(data_json,'$.level') AS INTEGER) DESC", name: 'name COLLATE NOCASE' };
+        const order = SORTS[q.get('sort')] || SORTS.recent, only = q.get('filter');
+        const where = 'name LIKE ?' + (only === 'banned' ? ' AND banned = 1' : '');
+        const total = db.prepare(`SELECT COUNT(*) n FROM players WHERE ${where}`).get(term).n;
+        const rows = db.prepare(`SELECT name, vocation, created_at, updated_at, last_login, last_ip, logins, play_seconds, banned, ban_reason,
+          json_extract(data_json,'$.level') level, json_extract(data_json,'$.gold') gold, json_extract(data_json,'$.deaths') deaths, json_extract(data_json,'$.kills') kills
+          FROM players WHERE ${where} ORDER BY ${order} LIMIT ? OFFSET ?`).all(term, size, page * size);
+        const on = new Set([...players.values()].map(o => o.name.toLowerCase()));
+        for (const r of rows) { r.online = on.has(r.name.toLowerCase()); r.voc = (VOC[r.vocation] || {}).name || r.vocation; }
+        return adminSend(res, 200, { total, page, size, rows });
+      }
+      if (route === 'user') {
+        const f = findAny(q.get('name')); const d = f.online || f.data; if (!d) return adminSend(res, 404, { error: 'Jogador não encontrado.' });
+        const meta = db.prepare('SELECT created_at, last_login, last_ip, logins, play_seconds, banned, ban_reason FROM players WHERE username = ?').get(f.key) || {};
+        const out = {}; for (const k of SAVE_KEYS) if (k !== 'salt' && k !== 'hash') out[k] = d[k];
+        out.region = regionName(d.x); out.online = !!f.online; out.vocName = (VOC[d.voc] || {}).name;
+        out.invNames = (d.inv || []).map(s => `${s.q}x ${(ITEMS[s.id] || {}).name || s.id}`);
+        out.eqNames = Object.fromEntries(Object.entries(d.eq || {}).map(([k, v]) => [k, v ? (ITEMS[v] || {}).name || v : null]));
+        const logs = db.prepare('SELECT ts, type, ip, msg FROM logs WHERE player = ? COLLATE NOCASE ORDER BY ts DESC LIMIT 60').all(d.name);
+        return adminSend(res, 200, { player: out, meta, logs });
+      }
+      if (route === 'logs') {
+        const limit = Math.min(500, +q.get('limit') || 200), before = +q.get('before') || 9e15, type = q.get('type'), term = (q.get('q') || '').trim();
+        let sql = 'SELECT id, ts, type, player, ip, msg FROM logs WHERE ts < ?'; const args = [before];
+        if (type) { sql += ' AND type = ?'; args.push(type); }
+        if (term) { sql += ' AND (player LIKE ? OR msg LIKE ? OR ip LIKE ?)'; args.push('%' + term + '%', '%' + term + '%', '%' + term + '%'); }
+        sql += ' ORDER BY ts DESC LIMIT ?'; args.push(limit);
+        return adminSend(res, 200, db.prepare(sql).all(...args));
+      }
+    }
+    if (req.method === 'POST') {
+      const b = await readBody(req);
+      if (route === 'logout') { adminTokens.delete(tok); return adminSend(res, 200, { ok: true }); }
+      if (route === 'broadcast') {
+        const text = String(b.msg || '').trim().slice(0, 200); if (!text) return adminSend(res, 400, { error: 'Escreva a mensagem.' });
+        broadcast({ t: 'msg', m: '[Aviso] ' + text, c: '#ffb347' }); logEv('admin', null, 'Aviso para todos: ' + text, ip);
+        return adminSend(res, 200, { ok: true, sent: players.size });
+      }
+      const f = findAny(b.name); if (!f.key) return adminSend(res, 404, { error: 'Jogador não encontrado.' });
+      const o = f.online, nm = o ? o.name : f.data.name;
+      if (route === 'kick') {
+        if (!o) return adminSend(res, 400, { error: `${nm} não está online.` });
+        send(o, { t: 'err', m: 'Você foi desconectado pelo administrador.' + (b.reason ? ' Motivo: ' + b.reason : '') }); try { o.ws.close(); } catch (e) { } leave(o);
+        logEv('admin', nm, 'Expulso pelo admin' + (b.reason ? ': ' + b.reason : ''), ip); return adminSend(res, 200, { ok: true });
+      }
+      if (route === 'ban') {
+        const on = !!b.ban, reason = String(b.reason || '').slice(0, 200);
+        db.prepare('UPDATE players SET banned = ?, ban_reason = ? WHERE username = ?').run(on ? 1 : 0, on ? reason : null, f.key);
+        if (on && o) { send(o, { t: 'err', m: 'Sua conta foi bloqueada.' + (reason ? ' Motivo: ' + reason : '') }); try { o.ws.close(); } catch (e) { } leave(o); }
+        logEv(on ? 'ban' : 'admin', nm, on ? 'Conta bloqueada' + (reason ? ': ' + reason : '') : 'Conta desbloqueada', ip); return adminSend(res, 200, { ok: true });
+      }
+      if (route === 'password') {
+        const pw = String(b.pass || ''); if (pw.length < 3) return adminSend(res, 400, { error: 'Senha muito curta (mín. 3).' });
+        const salt = crypto.randomBytes(8).toString('hex'), hash = hashPw(pw, salt);
+        if (o) { o.salt = salt; o.hash = hash; persist(o); } else { f.data.salt = salt; f.data.hash = hash; saveData(f.data); }
+        logEv('admin', nm, 'Senha redefinida pelo admin', ip); return adminSend(res, 200, { ok: true });
+      }
+      if (route === 'gold') {
+        const amt = Math.trunc(+b.amount || 0); if (!amt || Math.abs(amt) > 1e7) return adminSend(res, 400, { error: 'Valor inválido.' });
+        if (o) { o.gold = Math.max(0, o.gold + amt); o.dirty = true; persist(o); msg(o, `O administrador ${amt > 0 ? 'enviou' : 'retirou'} ${Math.abs(amt)} de ouro.`, '#ffd84a'); }
+        else { f.data.gold = Math.max(0, (f.data.gold || 0) + amt); saveData(f.data); }
+        logEv('admin', nm, `${amt > 0 ? 'Recebeu' : 'Perdeu'} ${Math.abs(amt)} de ouro (admin)`, ip); return adminSend(res, 200, { ok: true });
+      }
+      if (route === 'message') {
+        if (!o) return adminSend(res, 400, { error: `${nm} não está online.` });
+        const text = String(b.msg || '').trim().slice(0, 200); if (!text) return adminSend(res, 400, { error: 'Escreva a mensagem.' });
+        msg(o, '[Admin] ' + text, '#ffb347'); logEv('admin', nm, 'Mensagem do admin: ' + text, ip); return adminSend(res, 200, { ok: true });
+      }
+    }
+    return adminSend(res, 404, { error: 'Rota desconhecida.' });
+  } catch (e) { console.error('admin', e); return adminSend(res, 500, { error: 'Erro no servidor: ' + e.message }); }
+}
 const server = http.createServer((req, res) => {
   try {
     let u = decodeURIComponent(req.url.split('?')[0]); if (u === '/') u = '/index.html';
-    if (u === '/health') { res.writeHead(200, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' }); return res.end('ok ' + players.size); }
+    if (u === '/admin' || u === '/admin/') u = '/admin/index.html';
+    if (u.startsWith('/admin/api/')) return adminApi(req, res, u);
+    if (u === '/health') { res.writeHead(200, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*' }); return res.end('ok ' + players.size); }
     const f = path.join(PUBLIC, path.normalize(u).replace(/^(\.\.[\/\\])+/, ''));
     if (!f.startsWith(PUBLIC)) { res.writeHead(403); return res.end(); }
     let c; try { c = loadFile(f); } catch (e) { res.writeHead(404); return res.end('404'); }
@@ -668,10 +833,13 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, headers); res.end(c.data);
   } catch (e) { console.error('http', e); try { res.writeHead(500); res.end(); } catch (_) { } }
 });
-const wss = new WebSocketServer({ server, perMessageDeflate: false, maxPayload: 16 * 1024 });
+// ALLOWED_ORIGINS (opcional): endereços do jogo que podem conectar, ex.: https://piper.vercel.app,https://jogo.seudominio.com.br
+const ALLOWED = (process.env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim().replace(/\/$/, '')).filter(Boolean);
+const wss = new WebSocketServer({ server, perMessageDeflate: false, maxPayload: 16 * 1024,
+  verifyClient: info => !ALLOWED.length || !info.origin || ALLOWED.includes(info.origin) || info.origin === 'https://' + info.req.headers.host });
 
-wss.on('connection', ws => {
-  let p = null;
+wss.on('connection', (ws, req) => {
+  let p = null; const ip = clientIp(req);
   ws.isAlive = true; ws.on('pong', () => { ws.isAlive = true; });
   ws.on('message', raw => { try { onMessage(raw); } catch (e) { console.error('msg', e); } });
   function onMessage(raw) {
@@ -690,7 +858,9 @@ wss.on('connection', ws => {
         data = newPlayer(name, m.voc, pw, m.app);
       } else {
         if (!data) return ws.send(JSON.stringify({ t: 'err', m: 'Personagem não encontrado. Crie um novo personagem.' }));
-        if (hashPw(pw, data.salt) !== data.hash) return ws.send(JSON.stringify({ t: 'err', m: 'Senha incorreta para este personagem.' }));
+        if (hashPw(pw, data.salt) !== data.hash) { logEv('auth', data.name, 'Senha incorreta', ip); return ws.send(JSON.stringify({ t: 'err', m: 'Senha incorreta para este personagem.' })); }
+        const meta = getMeta.get(key);
+        if (meta && meta.banned) { logEv('auth', data.name, 'Tentou entrar, mas a conta está bloqueada', ip); return ws.send(JSON.stringify({ t: 'err', m: 'Esta conta foi bloqueada.' + (meta.ban_reason ? ' Motivo: ' + meta.ban_reason : '') })); }
       }
       for (const o of players.values()) if (o.name.toLowerCase() === key) { send(o, { t: 'err', m: 'Conectado em outro lugar.' }); o.ws.close(); leave(o); }
       p = Object.assign({}, data, { id: nextId++, kind: 'p', ws, dir: 0, walkDir: -1, nextMove: 0, nextAtk: 0, lastRegen: Date.now(), cds: {}, fx: [], dirty: true, target: null, skull: 0, berserk: 0 });
@@ -701,6 +871,8 @@ wss.on('connection', ws => {
       sendRegion(p, true);
       msg(p, `Bem-vindo(a) a As Aventuras do Piper, ${p.name}! Fale com o Mestre Aldo (no centro da cidade) para missões.`, '#ffd84a');
       broadcast({ t: 'msg', m: `${p.name} entrou no jogo.`, c: '#8c8' });
+      p.ip = ip; p.since = Date.now(); touchLogin.run(new Date().toISOString(), ip, key);
+      logEv(m.create ? 'create' : 'login', p.name, m.create ? `Criou o personagem (${VOC[p.voc].name})` : `Entrou no jogo (nível ${p.level}, ${REGIONS[regionOf(p.x)].name})`, ip);
       return;
     }
     switch (m.t) {
@@ -749,7 +921,7 @@ wss.on('connection', ws => {
       case 'chat': {
         const text = String(m.m || '').slice(0, 140).trim(); if (!text) break;
         if (text === '/online') { msg(p, 'Online: ' + [...players.values()].map(o => `${o.name} (${o.level})`).join(', '), '#9cf'); break; }
-        broadcast({ t: 'chat', id: p.id, name: p.name, lv: p.level, m: text });
+        broadcast({ t: 'chat', id: p.id, name: p.name, lv: p.level, m: text }); logEv('chat', p.name, text, p.ip);
         break;
       }
     }
@@ -762,6 +934,9 @@ setInterval(() => { for (const ws of wss.clients) { if (!ws.isAlive) { ws.termin
 function leave(p) {
   if (!players.has(p.id)) return;
   persist(p); saveDb();
+  const secs = Math.round((Date.now() - (p.since || Date.now())) / 1000);
+  try { addPlayTime.run(secs, p.name.toLowerCase()); } catch (e) { }
+  logEv('logout', p.name, `Saiu do jogo (jogou ${Math.floor(secs / 60)} min)`, p.ip);
   unplace(p); ents.delete(p.id); players.delete(p.id);
   broadcast({ t: 'msg', m: `${p.name} saiu do jogo.`, c: '#888' });
 }
@@ -802,6 +977,7 @@ function friendAnswer(p, raw, ok) {
   editFriends(name, list => { if (!list.some(f => f.toLowerCase() === p.name.toLowerCase())) list.push(p.name); });
   p.frDirty = true; persist(p);
   msg(p, `Você e ${name} agora são amigos! Ele aparece como ponto verde no mapa.`, '#5f5');
+  logEv('friend', p.name, `Agora é amigo de ${name}`, p.ip);
   if (o) msg(o, `${p.name} aceitou seu pedido. Vocês agora são amigos!`, '#5f5');
 }
 function friendDel(p, raw) {
@@ -875,12 +1051,13 @@ if (process.env.RENDER_EXTERNAL_URL && process.env.KEEP_AWAKE !== '0') {
   setInterval(() => { https.get(url, r => r.resume()).on('error', () => { }); }, 10 * 60 * 1000);
   console.log('Mantendo o servidor acordado: ' + url);
 }
-process.on('uncaughtException', e => console.error('erro não tratado (servidor continua):', e));
+process.on('uncaughtException', e => { console.error('erro não tratado (servidor continua):', e); logEv('error', null, String(e && e.stack || e)); });
 process.on('unhandledRejection', e => console.error('promessa rejeitada:', e));
 
 setInterval(() => { for (const p of players.values()) persist(p); saveDb(); }, 30000);
 function shutdown() { for (const p of players.values()) persist(p); saveDb(); process.exit(0); }
 process.on('SIGINT', shutdown); process.on('SIGTERM', shutdown);
 
+logEv('start', null, `Servidor iniciado (Node ${process.version})` + (ADMIN_PASSWORD ? '' : ' — painel admin desligado: defina ADMIN_PASSWORD'));
 server.on('error', e => { console.error('Não foi possível abrir a porta ' + PORT + ':', e.message); process.exit(1); });
 server.listen(PORT, '0.0.0.0', () => console.log(`As Aventuras do Piper rodando em http://localhost:${PORT} (pronto em ${Date.now() - BOOT} ms)`));

@@ -6,9 +6,11 @@
 <meta name="theme-color" content="#0e1234">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<script>(function(){var d=document.documentElement,on=function(){d.classList.add('touch')};
-try{if(('ontouchstart' in window)||navigator.maxTouchPoints>0||(window.matchMedia&&matchMedia('(any-pointer:coarse)').matches))on();}catch(e){}
-window.addEventListener('touchstart',on,{once:true,passive:true});window.addEventListener('pointerdown',function(e){if(e.pointerType!=='mouse')on();},true);})();</script>
+<script>/* Celular/tablet = controles de toque (joystick). Computador = hotbar no centro com F1, F2, F3, F4.
+   Decide pelo tipo de aparelho: notebook com tela de toque continua com a hotbar do computador. */
+(function(){var d=document.documentElement,ua=navigator.userAgent,mq=function(q){try{return matchMedia(q).matches}catch(e){return false}};
+var phone=/Android|iPhone|iPad|iPod|Mobi|Silk|Kindle/i.test(ua)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
+if(phone||(mq('(pointer:coarse)')&&!mq('(any-pointer:fine)')))d.classList.add('touch');})();</script>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="assets/ui/icon-192.png">
 <title>As Aventuras do Piper</title>
@@ -485,6 +487,7 @@ html.touch #acts kbd{display:none}
   <div class="mb"><div id="chatLog"></div><input class="field" id="chatIn" maxlength="140" placeholder="Digite e toque Enter...  (/online)"></div>
 </div></div>
 
+<script src="config.js"></script>
 <script src="defs.js"></script>
 <script src="world-assets.js"></script>
 <script src="enemy-assets.js"></script>

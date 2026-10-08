@@ -25,6 +25,9 @@ services:
       # Use "0" para desligar (ex.: se tiver outros serviços free e as 750 h/mês ficarem curtas).
       - key: KEEP_AWAKE
         value: "1"
+      # Senha do painel admin (https://SEU-ENDERECO/admin). Preencha no painel do Render.
+      - key: ADMIN_PASSWORD
+        sync: false
       # ---- Para NÃO perder os personagens a cada deploy (somente plano starter) ----
       # 1) troque plan: free por plan: starter
       # 2) descomente as 2 linhas abaixo e o bloco "disk"

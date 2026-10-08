@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<title>Painel Admin — As Aventuras do Piper</title>
+<link rel="icon" href="../assets/ui/icon-192.png">
+<style>
+:root{--bg:#0b0a16;--panel:#151329;--panel2:#1c1936;--line:#2e2950;--gold:#f2c14e;--gold2:#c9932f;--ink:#efe7d4;--dim:#a49c8a;--ok:#35e06b;--bad:#ef5b5b;--warn:#ffb347;--blue:#6fb6ff}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+a{color:var(--gold)}
+.hide{display:none!important}
+/* login */
+#login{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px;background:radial-gradient(ellipse at top,#241d48,#0b0a16 70%)}
+#login form{width:min(360px,100%);background:var(--panel);border:1.5px solid var(--gold2);border-radius:14px;padding:22px;box-shadow:0 10px 40px #000a}
+#login h1{margin:0 0 4px;font:700 20px/1.2 Georgia,serif;color:var(--gold)}
+#login p{margin:0 0 16px;color:var(--dim);font-size:13px}
+.field{width:100%;padding:10px 12px;border-radius:9px;border:1.5px solid var(--line);background:#0e0c1d;outline:none}
+.field:focus{border-color:var(--gold2)}
+.btn{padding:9px 14px;border-radius:9px;border:1.5px solid var(--line);background:var(--panel2);white-space:nowrap}
+.btn:hover{border-color:var(--gold2)}
+.btn.gold{background:linear-gradient(#efd779,#c79538 60%,#89561f);color:#23190e;border-color:#f9dfa0;font-weight:700}
+.btn.red{background:#5a1c22;border-color:#a8434c;color:#ffdede}
+.btn.sm{padding:5px 9px;font-size:12.5px;border-radius:7px}
+.err{color:var(--bad);font-size:13px;min-height:18px;margin-top:8px}
+/* app */
+header{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:12px;padding:10px 16px;background:rgba(11,10,22,.92);backdrop-filter:blur(6px);border-bottom:1px solid var(--line)}
+header h1{margin:0;font:700 16px/1.2 Georgia,serif;color:var(--gold);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--ok);box-shadow:0 0 8px var(--ok);flex:none}
+.dot.off{background:var(--bad);box-shadow:0 0 8px var(--bad)}
+nav{display:flex;gap:6px;padding:10px 16px 0;overflow-x:auto;border-bottom:1px solid var(--line)}
+nav button{white-space:nowrap;padding:8px 14px;border:0;border-bottom:2px solid transparent;background:none;color:var(--dim);font-weight:600}
+nav button.on{color:var(--gold);border-bottom-color:var(--gold)}
+main{padding:16px;max-width:1280px;margin:0 auto}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+.card .k{color:var(--dim);font-size:12px;text-transform:uppercase;letter-spacing:.6px}
+.card .v{font:700 24px/1.2 system-ui;margin-top:2px;font-variant-numeric:tabular-nums}
+.card .s{color:var(--dim);font-size:12px}
+.row2{display:grid;grid-template-columns:2fr 1fr;gap:10px;margin-top:10px}
+@media (max-width:800px){.row2{grid-template-columns:1fr}}
+h2{font:700 13px/1.2 system-ui;text-transform:uppercase;letter-spacing:.7px;color:var(--dim);margin:0 0 10px}
+.chart svg{width:100%;height:150px;display:block}
+.bars div{display:flex;align-items:center;gap:8px;margin:6px 0;font-size:13px}
+.bars span{flex:0 0 120px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bars i{display:block;height:10px;border-radius:5px;background:linear-gradient(90deg,var(--gold2),var(--gold));min-width:2px}
+.bars b{font-variant-numeric:tabular-nums;min-width:20px}
+.toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px}
+.toolbar .field{width:auto;flex:1;min-width:160px}
+.tablewrap{overflow-x:auto;background:var(--panel);border:1px solid var(--line);border-radius:12px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{padding:8px 10px;text-align:left;border-bottom:1px solid var(--line);white-space:nowrap}
+th{color:var(--dim);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.5px;background:var(--panel2);position:sticky;top:0}
+tbody tr:hover{background:#1f1b3b}
+tr.click{cursor:pointer}
+td.num{text-align:right;font-variant-numeric:tabular-nums}
+.tag{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11.5px;font-weight:600;background:#2a2648;color:var(--dim)}
+.tag.on{background:rgba(53,224,107,.15);color:var(--ok)}
+.tag.ban{background:rgba(239,91,91,.15);color:var(--bad)}
+.t-login,.t-create{color:var(--ok)}.t-logout{color:var(--dim)}.t-death,.t-ban,.t-error,.t-auth{color:var(--bad)}.t-level{color:var(--gold)}.t-chat{color:var(--blue)}.t-admin{color:var(--warn)}.t-travel,.t-friend{color:#c79bff}
+.msg{white-space:normal;min-width:260px;max-width:620px}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chips button{padding:5px 10px;border-radius:14px;border:1px solid var(--line);background:none;color:var(--dim);font-size:12.5px}
+.chips button.on{border-color:var(--gold);color:var(--gold);background:rgba(242,193,78,.1)}
+.empty{padding:22px;text-align:center;color:var(--dim)}
+.pager{display:flex;gap:8px;align-items:center;justify-content:flex-end;margin-top:10px;color:var(--dim)}
+/* gaveta de detalhes */
+#drawer{position:fixed;inset:0;z-index:20;display:flex;justify-content:flex-end;background:rgba(0,0,0,.55)}
+#drawer .in{width:min(520px,100%);height:100%;overflow:auto;background:var(--panel);border-left:1.5px solid var(--gold2);padding:16px}
+#drawer h3{margin:0;font:700 20px/1.2 Georgia,serif;color:var(--gold)}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;margin:12px 0;font-size:13px}
+.kv span{color:var(--dim)}
+.acts{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 14px}
+.box{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:10px;font-size:13px}
+.box ul{margin:4px 0 0;padding-left:18px}
+/* modal */
+#modal{position:fixed;inset:0;z-index:30;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.6);padding:16px}
+#modal form{width:min(400px,100%);background:var(--panel);border:1.5px solid var(--gold2);border-radius:12px;padding:16px}
+#modal h4{margin:0 0 10px;color:var(--gold);font-size:16px}
+#modal label{display:block;font-size:12.5px;color:var(--dim);margin:8px 0 4px}
+#modal .acts{justify-content:flex-end;margin:14px 0 0}
+#toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:40;padding:10px 16px;border-radius:10px;background:#20403a;border:1px solid var(--ok);color:#dfffe9;box-shadow:0 6px 20px #000a;display:none;max-width:90vw}
+#toast.bad{background:#47202a;border-color:var(--bad);color:#ffe0e0}
+</style>
+</head>
+<body>
+<script src="../config.js"></script>
+
+<div id="login">
+  <form id="loginForm" autocomplete="off">
+    <h1>Painel Admin</h1>
+    <p>As Aventuras do Piper · Epiper Tecnologia</p>
+    <input class="field" id="pw" type="password" placeholder="Senha do administrador" autocomplete="current-password" required>
+    <div class="err" id="loginErr"></div>
+    <button class="btn gold" style="width:100%;margin-top:6px" type="submit">Entrar</button>
+  </form>
+</div>
+
+<div id="app" class="hide">
+  <header><span class="dot" id="srvDot" title="Servidor"></span><h1>Painel Admin — As Aventuras do Piper</h1><button class="btn sm" id="logoutBtn">Sair</button></header>
+  <nav id="tabs">
+    <button data-t="overview" class="on">Visão geral</button><button data-t="online">Online</button><button data-t="users">Jogadores</button><button data-t="logs">Log</button><button data-t="notice">Aviso geral</button>
+  </nav>
+  <main>
+    <section id="t-overview">
+      <div class="grid" id="cards"></div>
+      <div class="row2">
+        <div class="card chart"><h2>Jogadores online (últimas 3 horas)</h2><div id="histChart"></div></div>
+        <div class="card"><h2>Online por terra</h2><div class="bars" id="regionBars"></div></div>
+      </div>
+      <div class="card" style="margin-top:10px"><h2>Últimos acontecimentos</h2><div class="tablewrap" style="border:0"><table><tbody id="recent"></tbody></table></div></div>
+    </section>
+
+    <section id="t-online" class="hide">
+      <div class="toolbar"><b id="onCount" style="color:var(--gold)"></b><span style="color:var(--dim)">Atualiza sozinho a cada 4 segundos.</span></div>
+      <div class="tablewrap"><table><thead><tr><th>Jogador</th><th>Vocação</th><th>Nível</th><th>Vida</th><th>Onde</th><th>Ouro</th><th>Tempo online</th><th>IP</th><th></th></tr></thead><tbody id="onlineBody"></tbody></table></div>
+    </section>
+
+    <section id="t-users" class="hide">
+      <div class="toolbar">
+        <input class="field" id="uq" placeholder="Buscar pelo nome">
+        <select class="field" id="usort" style="flex:0 0 auto"><option value="recent">Último acesso</option><option value="created">Mais novos</option><option value="level">Maior nível</option><option value="name">Nome (A-Z)</option></select>
+        <select class="field" id="ufilter" style="flex:0 0 auto"><option value="">Todos</option><option value="banned">Só bloqueados</option></select>
+      </div>
+      <div class="tablewrap"><table><thead><tr><th>Jogador</th><th>Status</th><th>Vocação</th><th>Nível</th><th>Ouro</th><th>Cadastro</th><th>Último acesso</th><th>Entradas</th><th>Tempo jogado</th><th>Último IP</th></tr></thead><tbody id="usersBody"></tbody></table></div>
+      <div class="pager"><span id="uinfo"></span><button class="btn sm" id="uprev">‹ Anterior</button><button class="btn sm" id="unext">Próxima ›</button></div>
+    </section>
+
+    <section id="t-logs" class="hide">
+      <div class="toolbar"><input class="field" id="lq" placeholder="Buscar jogador, texto ou IP"><label style="color:var(--dim);display:flex;gap:6px;align-items:center"><input type="checkbox" id="lauto" checked> Atualizar sozinho</label></div>
+      <div class="chips" id="ltypes" style="margin-bottom:10px"></div>
+      <div class="tablewrap"><table><thead><tr><th>Quando</th><th>Tipo</th><th>Jogador</th><th>O que aconteceu</th><th>IP</th></tr></thead><tbody id="logsBody"></tbody></table></div>
+      <div class="pager"><button class="btn sm" id="lmore">Carregar mais antigos</button></div>
+    </section>
+
+    <section id="t-notice" class="hide">
+      <div class="card" style="max-width:640px">
+        <h2>Mandar aviso para todos os jogadores online</h2>
+        <textarea class="field" id="bmsg" rows="3" maxlength="200" placeholder="Ex.: O servidor vai reiniciar em 5 minutos para atualização."></textarea>
+        <div class="acts"><button class="btn gold" id="bsend">Enviar aviso</button></div>
+        <p style="color:var(--dim);font-size:13px;margin:0">O aviso aparece em laranja no chat de todos que estão jogando agora.</p>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div id="drawer" class="hide"><div class="in" id="drawerIn"></div></div>
+<div id="modal" class="hide"><form id="modalForm"><h4 id="mTitle"></h4><div id="mFields"></div><div class="acts"><button type="button" class="btn" id="mCancel">Cancelar</button><button class="btn gold" id="mOk">Confirmar</button></div></form></div>
+<div id="toast"></div>
+
+<script>
+(function () {
+  const API = String(window.PIPER_SERVER || '').replace(/\/$/, '') + '/admin/api/';
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const store = { get(k) { try { return sessionStorage.getItem(k); } catch (e) { return null; } }, set(k, v) { try { v == null ? sessionStorage.removeItem(k) : sessionStorage.setItem(k, v); } catch (e) { } } };
+  let token = store.get('piper_admin'), tab = 'overview', timer = null;
+
+  async function api(path, body) {
+    const r = await fetch(API + path, { method: body ? 'POST' : 'GET', headers: Object.assign({ 'Content-Type': 'application/json' }, token ? { Authorization: 'Bearer ' + token } : {}), body: body ? JSON.stringify(body) : undefined, cache: 'no-store' });
+    let j = {}; try { j = await r.json(); } catch (e) { }
+    if (r.status === 401 && path !== 'login') { logout(true); throw new Error(j.error || 'Sessão expirada.'); }
+    if (!r.ok) throw new Error(j.error || ('Erro ' + r.status));
+    return j;
+  }
+  function toast(t, bad) { const el = $('toast'); el.textContent = t; el.className = bad ? 'bad' : ''; el.style.display = 'block'; clearTimeout(el._t); el._t = setTimeout(() => el.style.display = 'none', 3200); }
+  const fmtDur = s => { s = Math.max(0, Math.round(s)); const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60); return d ? `${d}d ${h}h` : h ? `${h}h ${m}min` : `${m} min`; };
+  const fmtTime = ts => { const d = new Date(ts), now = new Date(); const t = d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }); return d.toDateString() === now.toDateString() ? t : d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) + ' ' + t; };
+  const fmtSql = s => { if (!s) return '—'; const d = new Date(s.includes('T') ? s : s.replace(' ', 'T') + 'Z'); return isNaN(d) ? s : fmtTime(d.getTime()); };
+  const num = n => (n == null ? '—' : Number(n).toLocaleString('pt-BR'));
+
+  // ---------- login
+  $('loginForm').onsubmit = async e => {
+    e.preventDefault(); $('loginErr').textContent = '';
+    try { const j = await api('login', { password: $('pw').value }); token = j.token; store.set('piper_admin', token); $('pw').value = ''; start(); }
+    catch (err) { $('loginErr').textContent = err.message === 'Failed to fetch' ? 'Não foi possível falar com o servidor do jogo.' : err.message; }
+  };
+  function logout(expired) { if (!expired && token) api('logout', {}).catch(() => { }); token = null; store.set('piper_admin', null); clearInterval(timer); $('app').classList.add('hide'); $('login').classList.remove('hide'); if (expired) $('loginErr').textContent = 'Sessão expirada. Entre de novo.'; }
+  $('logoutBtn').onclick = () => logout(false);
+  function start() { $('login').classList.add('hide'); $('app').classList.remove('hide'); show(tab); clearInterval(timer); timer = setInterval(refresh, 4000); }
+
+  // ---------- abas
+  document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => show(b.dataset.t));
+  function show(t) {
+    tab = t; document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.t === t));
+    document.querySelectorAll('main > section').forEach(s => s.classList.toggle('hide', s.id !== 't-' + t));
+    refresh(true);
+  }
+  async function refresh(force) {
+    try {
+      if (tab === 'overview') await loadOverview();
+      else if (tab === 'online') await loadOnline();
+      else if (tab === 'users' && force) await loadUsers();
+      else if (tab === 'logs' && (force || $('lauto').checked)) await loadLogs(false);
+      $('srvDot').classList.remove('off');
+    } catch (e) { $('srvDot').classList.add('off'); if (force) toast(e.message === 'Failed to fetch' ? 'Servidor sem resposta.' : e.message, true); }
+  }
+
+  // ---------- visão geral
+  async function loadOverview() {
+    const [s, recent] = await Promise.all([api('stats'), api('logs?limit=15')]);
+    const c = [
+      ['Online agora', s.online, `pico hoje: ${s.peakToday}`], ['Cadastrados', num(s.users), `${s.newToday} novo(s) hoje`],
+      ['Entradas hoje', num(s.loginsToday), `${s.chatsToday} mensagens no chat`], ['Mortes hoje', num(s.deathsToday), `${num(s.monsters)} monstros vivos`],
+      ['Bloqueados', s.banned, 'contas'], ['Servidor ligado há', fmtDur(s.uptime), `Node ${esc(s.node)} · XP x${s.xpRate}`],
+      ['Memória', s.memMB + ' MB', `heap ${s.heapMB} MB`], ['Tick do jogo', s.tickAvg + ' ms', `máx ${s.tickMax} ms (limite 100)`]
+    ];
+    $('cards').innerHTML = c.map(([k, v, sub]) => `<div class="card"><div class="k">${k}</div><div class="v">${v}</div><div class="s">${sub}</div></div>`).join('');
+    const max = Math.max(1, ...s.byRegion.map(r => r.n));
+    $('regionBars').innerHTML = s.byRegion.map(r => `<div><span>${esc(r.name)}</span><i style="width:${r.n / max * 100}%"></i><b>${r.n}</b></div>`).join('');
+    drawHist(s.history);
+    $('recent').innerHTML = recent.length ? recent.map(logRow).join('') : '<tr><td class="empty">Nada registrado ainda.</td></tr>';
+  }
+  function drawHist(h) {
+    const el = $('histChart');
+    if (!h || h.length < 2) { el.innerHTML = '<div class="empty">O gráfico aparece depois de alguns minutos com o servidor ligado.</div>'; return; }
+    const W = 600, H = 150, P = 22, max = Math.max(2, ...h.map(p => p[1])), t0 = h[0][0], t1 = h[h.length - 1][0];
+    const X = t => P + (t - t0) / Math.max(1, t1 - t0) * (W - P - 6), Y = v => H - 18 - v / max * (H - 30);
+    const pts = h.map(p => `${X(p[0]).toFixed(1)},${Y(p[1]).toFixed(1)}`).join(' ');
+    const grid = [0, Math.ceil(max / 2), max].map(v => `<line x1="${P}" x2="${W - 6}" y1="${Y(v)}" y2="${Y(v)}" stroke="#2e2950"/><text x="${P - 6}" y="${Y(v) + 4}" fill="#a49c8a" font-size="10" text-anchor="end">${v}</text>`).join('');
+    const lbl = t => new Date(t).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+    el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${grid}
+      <polygon points="${X(t0)},${Y(0)} ${pts} ${X(t1)},${Y(0)}" fill="rgba(242,193,78,.15)"/><polyline points="${pts}" fill="none" stroke="#f2c14e" stroke-width="2"/>
+      <text x="${P}" y="${H - 3}" fill="#a49c8a" font-size="10">${lbl(t0)}</text><text x="${W - 6}" y="${H - 3}" fill="#a49c8a" font-size="10" text-anchor="end">${lbl(t1)}</text></svg>`;
+  }
+
+  // ---------- online
+  async function loadOnline() {
+    const list = await api('online');
+    $('onCount').textContent = list.length + (list.length === 1 ? ' jogador online' : ' jogadores online');
+    $('onlineBody').innerHTML = list.length ? list.map(p => `<tr>
+      <td><a href="#" data-user="${esc(p.name)}">${esc(p.name)}</a></td><td>${esc(p.voc)}</td><td class="num">${p.level}</td><td class="num">${p.hp}/${p.mhp}</td>
+      <td>${esc(p.region)}${p.town ? ' (cidade)' : ''} <span style="color:var(--dim)">${p.x},${p.y}</span></td><td class="num">${num(p.gold)}</td>
+      <td>${fmtDur((Date.now() - p.since) / 1000)}</td><td>${esc(p.ip || '')}</td>
+      <td><button class="btn sm" data-msg="${esc(p.name)}">Mensagem</button> <button class="btn sm red" data-kick="${esc(p.name)}">Expulsar</button></td></tr>`).join('')
+      : '<tr><td colspan="9" class="empty">Ninguém online agora.</td></tr>';
+  }
+
+  // ---------- jogadores
+  let upage = 0, utimer;
+  $('uq').oninput = () => { clearTimeout(utimer); utimer = setTimeout(() => { upage = 0; loadUsers(); }, 300); };
+  $('usort').onchange = $('ufilter').onchange = () => { upage = 0; loadUsers(); };
+  $('uprev').onclick = () => { if (upage > 0) { upage--; loadUsers(); } };
+  $('unext').onclick = () => { upage++; loadUsers(); };
+  async function loadUsers() {
+    const j = await api(`users?q=${encodeURIComponent($('uq').value)}&sort=${$('usort').value}&filter=${$('ufilter').value}&page=${upage}`);
+    const pages = Math.max(1, Math.ceil(j.total / j.size)); if (upage >= pages && upage > 0) { upage = pages - 1; return loadUsers(); }
+    $('uinfo').textContent = `${num(j.total)} jogador(es) · página ${upage + 1} de ${pages}`;
+    $('uprev').disabled = upage === 0; $('unext').disabled = upage + 1 >= pages;
+    $('usersBody').innerHTML = j.rows.length ? j.rows.map(r => `<tr class="click" data-user="${esc(r.name)}">
+      <td><b>${esc(r.name)}</b></td><td>${r.banned ? '<span class="tag ban">bloqueado</span>' : r.online ? '<span class="tag on">online</span>' : '<span class="tag">offline</span>'}</td>
+      <td>${esc(r.voc)}</td><td class="num">${r.level || 1}</td><td class="num">${num(r.gold)}</td><td>${fmtSql(r.created_at)}</td><td>${fmtSql(r.last_login)}</td>
+      <td class="num">${num(r.logins)}</td><td>${fmtDur(r.play_seconds || 0)}</td><td>${esc(r.last_ip || '—')}</td></tr>`).join('')
+      : '<tr><td colspan="10" class="empty">Nenhum jogador encontrado.</td></tr>';
+  }
+
+  // ---------- log
+  const TYPES = [['', 'Tudo'], ['login', 'Entradas'], ['create', 'Cadastros'], ['logout', 'Saídas'], ['chat', 'Chat'], ['death', 'Mortes'], ['level', 'Níveis'], ['travel', 'Viagens'], ['friend', 'Amigos'], ['auth', 'Senha errada'], ['ban', 'Bloqueios'], ['admin', 'Admin'], ['error', 'Erros'], ['start', 'Servidor']];
+  const TNAME = Object.fromEntries(TYPES);
+  let ltype = '', llast = 9e15, ltimer;
+  $('ltypes').innerHTML = TYPES.map(([k, n]) => `<button data-lt="${k}" class="${k === '' ? 'on' : ''}">${n}</button>`).join('');
+  $('ltypes').onclick = e => { const b = e.target.closest('[data-lt]'); if (!b) return; ltype = b.dataset.lt; $('ltypes').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b)); loadLogs(false); };
+  $('lq').oninput = () => { clearTimeout(ltimer); ltimer = setTimeout(() => loadLogs(false), 300); };
+  $('lmore').onclick = () => loadLogs(true);
+  const logRow = l => `<tr><td>${fmtTime(l.ts)}</td><td class="t-${esc(l.type)}">${esc(TNAME[l.type] || l.type)}</td><td>${l.player ? `<a href="#" data-user="${esc(l.player)}">${esc(l.player)}</a>` : '—'}</td><td class="msg">${esc(l.msg)}</td><td>${esc(l.ip || '')}</td></tr>`;
+  async function loadLogs(more) {
+    if (more && $('lauto').checked) $('lauto').checked = false;   // ao ver os antigos, para de atualizar sozinho
+    const rows = await api(`logs?limit=200&type=${ltype}&q=${encodeURIComponent($('lq').value)}${more ? '&before=' + llast : ''}`);
+    if (rows.length) llast = rows[rows.length - 1].ts;
+    const html = rows.map(logRow).join('');
+    if (more) $('logsBody').insertAdjacentHTML('beforeend', html);
+    else $('logsBody').innerHTML = html || '<tr><td colspan="5" class="empty">Nada encontrado.</td></tr>';
+    $('lmore').disabled = rows.length < 200;
+  }
+
+  // ---------- aviso geral
+  $('bsend').onclick = async () => {
+    const m = $('bmsg').value.trim(); if (!m) return toast('Escreva a mensagem.', true);
+    try { const j = await api('broadcast', { msg: m }); $('bmsg').value = ''; toast(`Aviso enviado para ${j.sent} jogador(es).`); } catch (e) { toast(e.message, true); }
+  };
+
+  // ---------- detalhes do jogador
+  document.addEventListener('click', e => {
+    const u = e.target.closest('[data-user]'); if (u) { e.preventDefault(); openUser(u.dataset.user); return; }
+    const k = e.target.closest('[data-kick]'); if (k) return kick(k.dataset.kick);
+    const m = e.target.closest('[data-msg]'); if (m) return sendMsg(m.dataset.msg);
+  });
+  $('drawer').onclick = e => { if (e.target.id === 'drawer') $('drawer').classList.add('hide'); };
+  async function openUser(name) {
+    let j; try { j = await api('user?name=' + encodeURIComponent(name)); } catch (e) { return toast(e.message, true); }
+    const p = j.player, m = j.meta, eq = p.eqNames || {};
+    $('drawerIn').innerHTML = `
+      <div style="display:flex;align-items:center;gap:10px"><h3 style="flex:1">${esc(p.name)}</h3><button class="btn sm" id="dClose">Fechar</button></div>
+      <div style="margin-top:6px">${m.banned ? `<span class="tag ban">bloqueado${m.ban_reason ? ': ' + esc(m.ban_reason) : ''}</span>` : p.online ? '<span class="tag on">online agora</span>' : '<span class="tag">offline</span>'}</div>
+      <div class="kv">
+        <span>Vocação</span><b>${esc(p.vocName)}</b><span>Nível</span><b>${p.level} (máximo já atingido: ${p.maxLevel})</b>
+        <span>Vida / Mana</span><b>${p.hp} / ${p.mp}</b><span>Ouro</span><b>${num(p.gold)}</b>
+        <span>Onde</span><b>${esc(p.region)}</b><span>Monstros mortos</span><b>${num(p.kills)}</b><span>Mortes</span><b>${num(p.deaths)}</b>
+        <span>Cadastro</span><b>${fmtSql(m.created_at)}</b><span>Último acesso</span><b>${fmtSql(m.last_login)}</b>
+        <span>Entradas</span><b>${num(m.logins)}</b><span>Tempo jogado</span><b>${fmtDur(m.play_seconds || 0)}</b><span>Último IP</span><b>${esc(m.last_ip || '—')}</b>
+      </div>
+      <div class="acts">
+        ${p.online ? `<button class="btn sm" data-msg="${esc(p.name)}">Mensagem</button><button class="btn sm red" data-kick="${esc(p.name)}">Expulsar</button>` : ''}
+        <button class="btn sm" id="dGold">Dar / tirar ouro</button><button class="btn sm" id="dPass">Redefinir senha</button>
+        <button class="btn sm ${m.banned ? '' : 'red'}" id="dBan">${m.banned ? 'Desbloquear conta' : 'Bloquear conta'}</button>
+      </div>
+      <div class="box"><b>Equipamento</b><ul>${['weapon', 'armor', 'helmet', 'shield'].map(k => `<li>${{ weapon: 'Arma', armor: 'Armadura', helmet: 'Elmo', shield: 'Escudo' }[k]}: ${esc(eq[k] || '—')}</li>`).join('')}</ul></div>
+      <div class="box"><b>Mochila</b> ${(p.invNames || []).length ? `<ul>${p.invNames.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : '<div style="color:var(--dim)">Vazia</div>'}</div>
+      <div class="box"><b>Amigos</b> ${(p.friends || []).length ? `<ul>${p.friends.map(f => `<li><a href="#" data-user="${esc(f)}">${esc(f)}</a></li>`).join('')}</ul>` : '<div style="color:var(--dim)">Nenhum</div>'}</div>
+      <h2 style="margin-top:14px">Histórico deste jogador</h2>
+      <div class="tablewrap"><table><tbody>${j.logs.length ? j.logs.map(l => logRow(Object.assign({ player: '' }, l))).join('') : '<tr><td class="empty">Sem registros.</td></tr>'}</tbody></table></div>`;
+    $('drawer').classList.remove('hide');
+    $('dClose').onclick = () => $('drawer').classList.add('hide');
+    $('dGold').onclick = async () => { const v = await ask('Dar ou tirar ouro de ' + p.name, [['amount', 'Quantidade (use número negativo para tirar)', 'number']]); if (v) act('gold', { name: p.name, amount: +v.amount }, 'Ouro atualizado.'); };
+    $('dPass').onclick = async () => { const v = await ask('Nova senha para ' + p.name, [['pass', 'Nova senha (mínimo 3 caracteres)', 'text']]); if (v) act('password', { name: p.name, pass: v.pass }, 'Senha redefinida. Avise o jogador.'); };
+    $('dBan').onclick = async () => {
+      if (m.banned) return act('ban', { name: p.name, ban: false }, 'Conta desbloqueada.');
+      const v = await ask('Bloquear a conta de ' + p.name + '?', [['reason', 'Motivo (aparece para o jogador)', 'text', true]]); if (v) act('ban', { name: p.name, ban: true, reason: v.reason }, 'Conta bloqueada.');
+    };
+  }
+  async function act(route, body, okText) { try { await api(route, body); toast(okText); if (!$('drawer').classList.contains('hide')) openUser(body.name); refresh(true); } catch (e) { toast(e.message, true); } }
+  async function kick(name) { const v = await ask('Expulsar ' + name + ' do jogo?', [['reason', 'Motivo (opcional)', 'text', true]]); if (v) act('kick', { name, reason: v.reason }, name + ' foi desconectado.'); }
+  async function sendMsg(name) { const v = await ask('Mensagem para ' + name, [['msg', 'Texto (aparece só para ele)', 'text']]); if (v) act('message', { name, msg: v.msg }, 'Mensagem enviada.'); }
+
+  // ---------- janelinha de confirmação com campos
+  function ask(title, fields) {
+    return new Promise(res => {
+      $('mTitle').textContent = title;
+      $('mFields').innerHTML = fields.map(([k, l, t, opt]) => `<label>${esc(l)}</label><input class="field" name="${k}" type="${t}" ${opt ? '' : 'required'} autocomplete="off">`).join('');
+      $('modal').classList.remove('hide'); const first = $('mFields').querySelector('input'); if (first) first.focus();
+      const done = v => { $('modal').classList.add('hide'); $('modalForm').onsubmit = null; res(v); };
+      $('mCancel').onclick = () => done(null);
+      $('modalForm').onsubmit = e => { e.preventDefault(); const v = {}; fields.forEach(([k]) => v[k] = $('mFields').querySelector(`[name="${k}"]`).value.trim()); done(v); };
+    });
+  }
+
+  if (token) start();
+})();
+</script>
+</body>
+</html>
