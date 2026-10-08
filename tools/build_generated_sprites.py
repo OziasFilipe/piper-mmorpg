@@ -54,13 +54,13 @@ def write_character_motion(rows, destination):
     # poses partem agora da mesma silhueta base de cada direção.
     poses = (
         (0, 1.00, 1.00, 0, 0, 0),
-        (0, 1.00, 1.00, -3, 0, 0.8),
-        (0, 1.00, 1.00, -4, 0, 1.5),
-        (0, 1.00, 1.00, -1, 0, 0.6),
-        (0, 1.00, 1.00, 3, 0, -0.8),
-        (0, 1.00, 1.00, 4, 0, -1.6),
-        (0, 1.00, 1.00, 2, 0, -0.8),
-        (0, 1.00, 1.00, -1, 0, 0.3),
+        (0, 1.00, 1.00, 0, 0, 0),
+        (0, 1.00, 1.00, 0, 0, 0),
+        (0, 1.00, 1.00, 0, 0, 0),
+        (0, 1.00, 1.00, 0, 0, 0),
+        (0, 1.00, 1.00, 0, 0, 0),
+        (0, 1.00, 1.00, 0, 0, 0),
+        (0, 1.00, 1.00, 0, 0, 0),
         (0, 1.00, 1.00, 0, 0, 0),
         (0, 1.00, 1.00, -5, 0, 3.0),
         (0, 1.00, 1.00, 8, 0, -5.0),
@@ -69,11 +69,33 @@ def write_character_motion(rows, destination):
     for row, cells in enumerate(rows):
         for frame, (source, sx, sy, dx, dy, angle) in enumerate(poses):
             pose = motion_pose(cells[source], sx, sy, dx, dy, angle, 128, 192, 185)
-            # A oscilação do corpo já dá leitura de passada. O recorte de
-            # pernas só é seguro quando a arte vem em camadas; nesta folha ele
-            # cortava capas e armas em alguns ângulos, então não é aplicado.
+            if 1 <= frame <= 8:
+                # Apenas os pés alternam. Corpo, capa, arma e escudo ficam
+                # ancorados, evitando o tremor que o deslocamento da figura
+                # inteira causava durante a caminhada.
+                pose = step_feet(pose, frame, 185)
             output.alpha_composite(pose, (frame * 128, row * 192))
     output.save(destination, optimize=True)
+
+
+def step_feet(frame, phase, ground):
+    """Ergue um dos pés por vez, sem deformar a silhueta completa."""
+    # primeira metade do ciclo: pé esquerdo; segunda: direito. O recorte fica
+    # abaixo da canela, portanto nunca alcança arma, escudo ou capa alta.
+    lift = (0, 1, 3, 1, 0, 1, 3, 1)[phase - 1]
+    if not lift:
+        return frame
+    left = phase <= 4
+    x0, x1 = (30, 63) if left else (64, 98)
+    y0 = ground - 19
+    part = frame.crop((x0, y0, x1, ground + 1))
+    alpha = part.getchannel('A')
+    if not alpha.getbbox():
+        return frame
+    out = frame.copy()
+    out.paste((0, 0, 0, 0), (x0, y0, x1, ground + 1), alpha)
+    out.alpha_composite(part, (x0, y0 - lift))
+    return out
 
 
 def export_main_action_sheets():
