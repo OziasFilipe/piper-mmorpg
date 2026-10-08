@@ -1,44 +1,45 @@
 # Jogo na Vercel — As Aventuras do Piper
 
-## Como fica
+O jogo roda **inteiro na Vercel**: as telas e imagens (CDN) **e o servidor do jogo** (mundo, monstros, chat, amigos, painel admin), que vira uma função em `api/server.js`, na região **São Paulo (gru1)**.
 
-- **Vercel:** publica a parte do jogo que roda no navegador (a pasta `public`: telas, imagens, músicas, botão de instalar e o painel `/admin`). Fica num endereço `https://….vercel.app`, rápido e com HTTPS.
-- **VPS (Docker):** continua rodando o **servidor do jogo** (`server.js`), que guarda os personagens e controla o mundo. O jogo aberto pela Vercel conecta nele.
+O mesmo código também roda em qualquer outro lugar, sem mudar nada:
 
-### Por que o servidor não roda na Vercel?
+| Onde | Como ligar | Onde salva os personagens |
+| --- | --- | --- |
+| Seu computador | `npm install` e `npm start` (ou `iniciar.bat`) | arquivo `data/players.sqlite` |
+| VPS com Docker | veja `DOCKER.md` | volume do Docker (SQLite) |
+| Render | `render.yaml` | SQLite (com disco no plano pago) |
+| **Vercel** | este guia | **Redis (Upstash)** |
 
-A Vercel aceita conexões em tempo real (WebSocket) só em teste (beta) e com limites que quebram um MMORPG:
+O servidor escolhe sozinho onde salvar (arquivo `store.js`): Redis quando existe, senão SQLite, senão memória.
 
-- cada conexão cai depois de no máximo **5 minutos** no plano grátis (13 min no Pro);
-- os jogadores podem cair em **cópias diferentes** do servidor e não se enxergar no mapa;
-- não há disco para salvar os personagens (o banco SQLite some).
+## Passo a passo na Vercel
 
-Por isso o servidor fica na VPS, e a Vercel serve o jogo para o navegador.
+1. **Importar:** na Vercel, *Add New… → Project → Import* o repositório `piper-mmorpg`. Não mexa em nada da configuração (o `vercel.json` já cuida de tudo).
+2. **Banco para salvar os personagens (obrigatório):** abra o projeto → aba **Storage** → **Create Database** (ou *Marketplace*) → **Upstash for Redis** → plano grátis → **Connect** ao projeto `piper-mmorpg`.
+   Isso cria sozinho as variáveis `KV_REST_API_URL` e `KV_REST_API_TOKEN`.
+   *Sem esse passo o jogo funciona, mas os personagens somem sempre que o servidor reinicia.*
+3. **Senha do painel admin:** *Settings → Environment Variables* → `ADMIN_PASSWORD` = uma senha forte.
+4. **Não crie** `PIPER_SERVER` (se existir, apague): ela só serve para usar um servidor de fora (ver abaixo).
+5. **Deployments → ⋯ → Redeploy** (variáveis novas só valem em uma publicação nova).
+6. Abra `https://SEU-PROJETO.vercel.app` no celular. O painel fica em `https://SEU-PROJETO.vercel.app/admin`.
 
-## Passo a passo
+Para conferir: `https://SEU-PROJETO.vercel.app/health` deve mostrar `ok 0`.
 
-1. **Servidor na VPS funcionando com HTTPS** (veja `DOCKER.md`). Exemplo: `https://jogo.seudominio.com.br`.
-   Na Vercel o site é `https`, então o servidor também precisa ser `https` (o Caddy do Docker já faz isso).
-2. Na Vercel: **Add New… → Project → Import** o repositório do GitHub.
-3. Em **Environment Variables**, crie:
-   - `PIPER_SERVER` = `https://jogo.seudominio.com.br` (o endereço do servidor da VPS, sem barra no fim).
-4. Clique em **Deploy**. O `vercel.json` já diz o que fazer: não instala nada, só grava o endereço do servidor em `public/config.js` e publica a pasta `public`.
-   Se você publicar **sem** o `PIPER_SERVER`, o site sobe mesmo assim, mas ao tentar entrar aparece o aviso de que o servidor não foi configurado. Crie a variável e faça **Redeploy**.
-   Para testar um servidor sem mexer na Vercel, abra o site com `?server=https://jogo.seudominio.com.br` no final do endereço (o aparelho lembra a escolha).
-5. Abra o endereço da Vercel no celular: o jogo carrega, conecta na VPS e mostra o convite de instalação.
+## Como o jogo se adapta à Vercel
 
-O painel admin também funciona pela Vercel: `https://SEU-PROJETO.vercel.app/admin` (a senha é a mesma do servidor).
+- **Conexão renovada sozinha:** na Vercel cada conexão em tempo real dura no máximo 5 minutos (plano grátis). Por volta dos 4,5 minutos o servidor pede ao celular para reconectar e o jogo volta no mesmo segundo, com o mesmo personagem, sem sair da tela. A mesma reconexão automática vale quando a internet do celular oscila (em qualquer lugar onde o jogo rode).
+- **Salvamento:** cada mudança é gravada no Redis em lotes a cada 2 segundos, e o personagem é recarregado do Redis ao entrar.
 
-## Opcional: só o seu site pode conectar
+## Limites da Vercel (importante)
 
-Na VPS, no arquivo `.env`, acrescente os endereços que podem abrir o jogo e rode `docker compose up -d`:
+- O suporte da Vercel a conexões em tempo real ainda é **beta**.
+- Com muitos jogadores ao mesmo tempo a Vercel pode abrir **mais de uma cópia** do servidor. Os personagens continuam salvos, mas jogadores em cópias diferentes **não se veem** no mapa nem no chat. Com poucos jogadores isso quase não acontece.
+- O plano grátis (Hobby) tem cota mensal: **4 horas de CPU** e **360 GB-hora de memória**. A memória conta o tempo todo em que há alguém conectado; com a função usando 2 GB, isso dá cerca de **180 horas de servidor ligado por mês** (umas 6 horas por dia). Passou disso, a Vercel pausa até o mês seguinte (ou cobra, no plano Pro). Acompanhe em *Usage*.
+- O Redis grátis do Upstash também tem limite de comandos por mês (veja no painel do Upstash).
 
-```
-ALLOWED_ORIGINS=https://SEU-PROJETO.vercel.app,https://jogo.seudominio.com.br
-```
+Para muitos jogadores o dia inteiro, a VPS com Docker (`DOCKER.md`) é mais barata e sem esses limites.
 
-Sem essa linha, qualquer site pode conectar no servidor (é o padrão).
+## Opcional: usar um servidor de fora (VPS)
 
-## Atualizar
-
-Todo **Push** no GitHub publica a nova versão na Vercel sozinho. Se mudou algo no `server.js`, atualize também a VPS (`git pull && docker compose up -d --build`).
+Se quiser que a Vercel sirva só as telas e o jogo conecte na sua VPS, crie `PIPER_SERVER` = `https://jogo.seudominio.com.br` e faça Redeploy. Para testar outro servidor sem mexer na Vercel, abra o site com `?server=https://...` no fim do endereço.

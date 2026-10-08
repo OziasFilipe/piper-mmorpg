@@ -344,6 +344,11 @@ html.touch #acts kbd{display:none}
 #gateInstall{display:inline-flex;align-items:center;gap:8px;font-size:16px;padding:10px 22px;animation:instPulse 2.2s ease-in-out infinite}
 #gateInstall svg{width:20px;height:20px;fill:none;stroke:#23190e;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
 #gateLater{display:block;margin:10px auto 0;background:none;border:0;color:#bfb7a5;font:500 13px Poppins,sans-serif;text-decoration:underline;cursor:pointer}
+
+/* ---- Aviso de reconexão automática ---- */
+#reconn{position:fixed;left:50%;top:calc(8px + env(safe-area-inset-top));transform:translateX(-50%);z-index:75;display:none;align-items:center;gap:8px;padding:7px 14px;border-radius:18px;background:rgba(14,12,32,.92);border:1.5px solid #c9932f;color:#ffe9b0;font:600 13px Poppins,sans-serif;box-shadow:0 4px 14px #0009}
+#reconn i{width:12px;height:12px;border-radius:50%;border:2px solid #ffd86a;border-right-color:transparent;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
 </style>
 </head>
 <body>
@@ -445,6 +450,7 @@ html.touch #acts kbd{display:none}
   <div class="lsub">Viajando para</div><div class="lname" id="ldName">—</div><div class="ltown" id="ldTown"></div>
   <div class="lbar"><i id="ldBar"></i></div><div class="ltip" id="ldTip"></div>
 </div></div>
+<div id="reconn"><i></i>Reconectando…</div>
 <!-- PAINÉIS -->
 <div class="modal" id="mPanel"><div class="glass">
   <div class="mh"><h2 id="panelTitle">Personagem</h2>

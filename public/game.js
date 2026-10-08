@@ -130,14 +130,17 @@
   // Também aceita ?server=https://... no endereço (fica salvo no aparelho) — útil para testar outro servidor.
   const qsServer = (() => { try { const v = new URLSearchParams(location.search).get('server'); if (v) LS.set('piper_server', v); return v; } catch (e) { return null; } })();
   const SERVER = String(window.PIPER_SERVER || qsServer || LS.get('piper_server') || '').trim().replace(/\/$/, '');
-  const NO_SERVER = !!window.PIPER_NO_SERVER && !SERVER;   // publicado na Vercel sem PIPER_SERVER
+  // PIPER_API: o servidor do jogo roda no próprio site, num caminho (na Vercel: /api/server).
+  const API = SERVER ? '' : String(window.PIPER_API || '').trim().replace(/\/$/, '');
+  const NO_SERVER = !!window.PIPER_NO_SERVER && !SERVER && !API;
   const HTTP_BASE = SERVER ? SERVER + '/' : '';
-  const WS_URL = SERVER ? SERVER.replace(/^http/i, 'ws') : (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
+  const healthUrl = () => (API ? API + '?r=health&t=' : HTTP_BASE + 'health?t=') + Date.now();
+  const WS_URL = SERVER ? SERVER.replace(/^http/i, 'ws') : (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + API;
   let lastErr = '';   // motivo da desconexão (ex.: expulso pelo administrador)
   async function wakeServer(onWait) {
     const t0 = Date.now();
     for (let i = 0; Date.now() - t0 < 90000; i++) {
-      try { const r = await fetch(HTTP_BASE + 'health?t=' + Date.now(), { cache: 'no-store' }); if (r.ok) return true; } catch (e) { }
+      try { const r = await fetch(healthUrl(), { cache: 'no-store' }); if (r.ok) return true; } catch (e) { }
       onWait(Math.round((Date.now() - t0) / 1000));
       await new Promise(r => setTimeout(r, 2000));
     }
@@ -157,22 +160,56 @@
     clearTimeout(connTimer);
     connTimer = setTimeout(() => { if (sock.readyState !== 1 && !inGame) { sock.onclose = null; try { sock.close(); } catch (e) { }
       if (attempt < 3) { errEl.textContent = 'Tentando de novo...'; connect(create, attempt + 1); } else { connecting = false; errEl.textContent = 'Não foi possível conectar. Verifique sua internet.'; } } }, 12000);
+    pendingCreds = { name, pass };
     sock.onopen = () => { clearTimeout(connTimer); sock.send(JSON.stringify({ t: 'login', create, name, pass, voc, app })); };
     sock.onmessage = ev => onMsg(JSON.parse(ev.data));
     sock.onerror = () => { };
     sock.onclose = () => {
       clearTimeout(connTimer); connecting = false;
-      if (inGame) { inGame = false; playMusic('title'); show('game', false); show('title', true); $('authErr').textContent = lastErr || 'Conexão perdida. Entre novamente.'; lastErr = ''; setTab('login'); }
+      if (inGame && !lastErr && session) return reconnect();   // caiu a conexão (ou a Vercel renovou): volta sozinho
+      if (inGame) leaveToTitle(lastErr || 'Conexão perdida. Entre novamente.');
       else if (errEl && /Conectando/.test(errEl.textContent)) errEl.textContent = 'Não foi possível conectar ao servidor.';
     };
+  }
+  // ---- Reconexão automática: a internet do celular oscila e, na Vercel, cada conexão dura até 5 min.
+  // O jogo reconecta sozinho com o mesmo personagem, sem voltar para a tela inicial.
+  let session = null, pendingCreds = null, reconnecting = false;
+  function leaveToTitle(text) {
+    inGame = false; reconnecting = false; session = null; showReconn(false); playMusic('title');
+    show('game', false); show('title', true); $('authErr').textContent = text; lastErr = ''; setTab('login');
+  }
+  function showReconn(on) { const el = $('reconn'); if (el) el.style.display = on ? 'flex' : 'none'; }
+  async function reconnect() {
+    if (reconnecting) return; reconnecting = true; showReconn(true);
+    const waits = [150, 600, 1200, 2000, 3000, 5000, 8000, 8000];
+    for (let i = 0; i < waits.length && reconnecting; i++) {
+      await new Promise(r => setTimeout(r, waits[i]));
+      const ok = await new Promise(res => {
+        let done = false; const fin = v => { if (!done) { done = true; clearTimeout(to); res(v); } };
+        const sock = new WebSocket(WS_URL), to = setTimeout(() => { try { sock.close(); } catch (e) { } fin(false); }, 8000);
+        sock.onopen = () => sock.send(JSON.stringify({ t: 'login', create: false, name: session.name, pass: session.pass }));
+        sock.onmessage = ev => {
+          const m = JSON.parse(ev.data);
+          if (m.t === 'welcome') { ws = sock; sock.onmessage = e2 => onMsg(JSON.parse(e2.data)); sock.onclose = () => { if (inGame && !lastErr && session) reconnect(); else if (inGame) leaveToTitle(lastErr || 'Conexão perdida. Entre novamente.'); }; onMsg(m); fin(true); }
+          else if (m.t === 'err') { lastErr = m.m; fin(false); reconnecting = false; }
+        };
+        sock.onerror = () => { }; sock.onclose = () => fin(false);
+      });
+      if (ok) { reconnecting = false; showReconn(false); return; }
+    }
+    leaveToTitle(lastErr || 'Conexão perdida. Entre novamente.');
   }
   const send = o => { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); };
 
   function onMsg(m) {
     switch (m.t) {
       case 'err': if (!inGame) { errEl.textContent = m.m; connecting = false; } else { addLog(m.m, '#ff8a8a'); lastErr = m.m; } break;
+      case 'renew': break;   // o servidor vai renovar a conexão: a reconexão automática cuida disso
       case 'welcome': {
-        myId = m.id; loadRegion(m); inGame = true; connecting = false; ents.clear(); fxs = []; $('feed').innerHTML = ''; $('chatLog').innerHTML = '';
+        const again = inGame && reconnecting;   // reconectou: mantém chat e tela
+        if (pendingCreds && !again) session = pendingCreds;
+        myId = m.id; loadRegion(m); inGame = true; connecting = false; ents.clear(); fxs = [];
+        if (!again) { $('feed').innerHTML = ''; $('chatLog').innerHTML = ''; }
         show('title', false); show('game', true); resize(); break;
       }
       case 'loading': showLoading(m.to); sfx('portal', 500); break;

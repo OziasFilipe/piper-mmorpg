@@ -1,7 +1,7 @@
 'use strict';
 // As Aventuras do Piper — servidor MMORPG 2D (Node.js + WebSocket)
 const http = require('http'), fs = require('fs'), path = require('path'), crypto = require('crypto'), zlib = require('zlib');
-const Database = require('better-sqlite3');
+const { createStore } = require('./store');
 const BOOT = Date.now();
 const { WebSocketServer } = require('ws');
 const D = require('./public/defs.js');
@@ -11,7 +11,6 @@ const PORT = +process.env.PORT || 3000;
 const XP_RATE = +process.env.XP_RATE || 2;
 const W = D.W, H = D.H, CX = W >> 1, CY = H >> 1;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
-const SQLITE_FILE = path.join(DATA_DIR, 'players.sqlite'), LEGACY_SAVE_FILE = path.join(DATA_DIR, 'players.json');
 const TICK = 100;
 
 // ------------------------------------------------------------------ MUNDO (várias regiões)
@@ -217,80 +216,21 @@ console.log(`${NR} regiões ${W}x${H} geradas, ${spawns.length} monstros.`);
 
 // ------------------------------------------------------------------ PERSISTÊNCIA
 const SAVE_KEYS = ['name', 'voc', 'x', 'y', 'level', 'maxLevel', 'xp', 'hp', 'mp', 'stats', 'points', 'gold', 'inv', 'eq', 'taskIdx', 'task', 'kills', 'deaths', 'salt', 'hash', 'app', 'friends'];
-// SQLite local. O arquivo JSON anterior é importado uma única vez e mantido
-// como cópia de segurança até uma remoção manual pelo administrador.
-fs.mkdirSync(DATA_DIR, { recursive: true });
-const db = new Database(SQLITE_FILE);
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
-db.exec(`
-  CREATE TABLE IF NOT EXISTS players (
-    username TEXT PRIMARY KEY COLLATE NOCASE,
-    name TEXT NOT NULL,
-    vocation TEXT NOT NULL,
-    password_salt TEXT NOT NULL,
-    password_hash TEXT NOT NULL,
-    data_json TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-  );
-  CREATE INDEX IF NOT EXISTS idx_players_name ON players(name COLLATE NOCASE);
-`);
-const getPlayer = db.prepare('SELECT data_json FROM players WHERE username = ?');
-const countPlayers = db.prepare('SELECT COUNT(*) AS total FROM players');
-const upsertPlayer = db.prepare(`
-  INSERT INTO players (username, name, vocation, password_salt, password_hash, data_json)
-  VALUES (@username, @name, @voc, @salt, @hash, @data)
-  ON CONFLICT(username) DO UPDATE SET
-    name = excluded.name, vocation = excluded.vocation,
-    password_salt = excluded.password_salt, password_hash = excluded.password_hash,
-    data_json = excluded.data_json, updated_at = CURRENT_TIMESTAMP
-`);
+// Onde os personagens ficam salvos é decidido em store.js: SQLite (computador/VPS/Docker/Render),
+// Redis/Upstash (Vercel) ou memória (último recurso).
+const store = createStore({ dataDir: DATA_DIR });
+console.log('[armazenamento] usando ' + store.kind + (store.persistent ? '' : ' (TEMPORÁRIO: os dados somem ao reiniciar)'));
 function persist(p) {
   const o = {}; for (const k of SAVE_KEYS) o[k] = p[k];
   saveData(o);
 }
-function saveData(o) {
-  upsertPlayer.run({ username: o.name.toLowerCase(), name: o.name, voc: o.voc, salt: o.salt, hash: o.hash, data: JSON.stringify(o) });
-}
-function loadPlayer(username) {
-  const row = getPlayer.get(username);
-  if (!row) return null;
-  try { return JSON.parse(row.data_json); } catch (e) { console.error('jogador inválido no SQLite:', username, e); return null; }
-}
-function saveDb() { try { db.pragma('wal_checkpoint(PASSIVE)'); } catch (e) { console.error('sqlite checkpoint', e); } }
-function migrateLegacyPlayers() {
-  if (countPlayers.get().total || !fs.existsSync(LEGACY_SAVE_FILE)) return;
-  try {
-    const legacy = JSON.parse(fs.readFileSync(LEGACY_SAVE_FILE, 'utf8'));
-    const rows = Object.values(legacy).filter(p => p && p.name && p.voc && p.salt && p.hash);
-    db.transaction(players => { for (const p of players) persist(p); })(rows);
-    if (rows.length) console.log(`${rows.length} jogador(es) migrado(s) para SQLite.`);
-  } catch (e) { console.error('migração players.json -> SQLite', e); }
-}
-migrateLegacyPlayers();
+function saveData(o) { store.savePlayer(o); }
+function loadPlayer(username) { return store.getPlayer(username); }
+function saveDb() { store.flush(); }
 
 // ------------------------------------------------------------------ ADMIN: dados extras + LOG
-// Colunas novas na tabela de jogadores (criadas uma vez, sem apagar nada).
-(() => {
-  const cols = new Set(db.prepare('PRAGMA table_info(players)').all().map(c => c.name));
-  for (const [c, def] of [['last_login', 'TEXT'], ['last_ip', 'TEXT'], ['logins', 'INTEGER NOT NULL DEFAULT 0'], ['play_seconds', 'INTEGER NOT NULL DEFAULT 0'], ['banned', 'INTEGER NOT NULL DEFAULT 0'], ['ban_reason', 'TEXT']])
-    if (!cols.has(c)) db.exec(`ALTER TABLE players ADD COLUMN ${c} ${def}`);
-})();
-db.exec(`
-  CREATE TABLE IF NOT EXISTS logs (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, type TEXT NOT NULL, player TEXT, ip TEXT, msg TEXT);
-  CREATE INDEX IF NOT EXISTS idx_logs_ts ON logs(ts);
-  CREATE INDEX IF NOT EXISTS idx_logs_type ON logs(type, ts);
-  CREATE INDEX IF NOT EXISTS idx_logs_player ON logs(player COLLATE NOCASE, ts);
-`);
-const insLog = db.prepare('INSERT INTO logs (ts, type, player, ip, msg) VALUES (?, ?, ?, ?, ?)');
 // tipos: start, create, login, logout, auth (senha errada), ban, death, level, chat, travel, friend, admin, error
-function logEv(type, player, text, ip) { try { insLog.run(Date.now(), type, player || null, ip || null, String(text || '').slice(0, 500)); } catch (e) { } }
-const getMeta = db.prepare('SELECT banned, ban_reason FROM players WHERE username = ?');
-const touchLogin = db.prepare("UPDATE players SET last_login = ?, last_ip = ?, logins = logins + 1 WHERE username = ?");
-const addPlayTime = db.prepare('UPDATE players SET play_seconds = play_seconds + ? WHERE username = ?');
-function pruneLogs() { try { db.prepare('DELETE FROM logs WHERE ts < ?').run(Date.now() - 60 * 864e5); } catch (e) { } }   // guarda 60 dias
-pruneLogs(); setInterval(pruneLogs, 864e5);
+function logEv(type, player, text, ip) { try { store.log(type, player, text, ip); } catch (e) { } }
 const clientIp = req => String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() || (req.socket && req.socket.remoteAddress || '').replace(/^::ffff:/, '');
 const hashPw = (pw, salt) => crypto.createHash('sha256').update(salt + ':' + pw).digest('hex');
 
@@ -727,10 +667,8 @@ async function adminApi(req, res, u) {
     if (req.method === 'GET') {
       if (route === 'stats') {
         const day0 = new Date(); day0.setHours(0, 0, 0, 0);
-        const users = db.prepare('SELECT COUNT(*) n FROM players').get().n;
-        const newToday = db.prepare('SELECT COUNT(*) n FROM players WHERE created_at >= ?').get(day0.toISOString().replace('T', ' ').slice(0, 19)).n;
-        const banned = db.prepare('SELECT COUNT(*) n FROM players WHERE banned = 1').get().n;
-        const cnt = type => db.prepare('SELECT COUNT(*) n FROM logs WHERE type = ? AND ts >= ?').get(type, day0.getTime()).n;
+        const users = store.countPlayers(), newToday = store.countNewSince(day0.getTime()), banned = store.countBanned();
+        const cnt = type => store.countLogs(type, day0.getTime());
         const byRegion = REGIONS.map(r => ({ name: r.name, n: 0 })); for (const o of players.values()) byRegion[regionOf(o.x)].n++;
         const mem = process.memoryUsage();
         return adminSend(res, 200, {
@@ -738,42 +676,31 @@ async function adminApi(req, res, u) {
           loginsToday: cnt('login') + cnt('create'), deathsToday: cnt('death'), chatsToday: cnt('chat'),
           monsters: [...ents.values()].filter(e => e.kind === 'm').length, byRegion,
           memMB: Math.round(mem.rss / 1048576), heapMB: Math.round(mem.heapUsed / 1048576),
-          tickAvg: +(perf.sum / (perf.n || 1)).toFixed(2), tickMax: perf.max, node: process.version, xpRate: XP_RATE, history: onlineHist.slice(-180)
+          tickAvg: +(perf.sum / (perf.n || 1)).toFixed(2), tickMax: perf.max, node: process.version, storage: store.kind, persistent: store.persistent, host: process.env.VERCEL ? 'Vercel' : 'servidor próprio', xpRate: XP_RATE, history: onlineHist.slice(-180)
         });
       }
       if (route === 'online') {
         return adminSend(res, 200, [...players.values()].map(o => ({ name: o.name, voc: VOC[o.voc].name, level: o.level, hp: o.hp, mhp: maxHp(o), gold: o.gold, region: regionName(o.x), x: o.x - regionOf(o.x) * W, y: o.y, town: isTown(o.x, o.y), ip: o.ip, since: o.since, friends: o.friends.length })).sort((a, b) => b.level - a.level));
       }
       if (route === 'users') {
-        const term = '%' + (q.get('q') || '').trim() + '%', page = Math.max(0, +q.get('page') || 0), size = 50;
-        const SORTS = { recent: 'last_login DESC', created: 'created_at DESC', level: "CAST(json_extract(data_json,'$.level') AS INTEGER) DESC", name: 'name COLLATE NOCASE' };
-        const order = SORTS[q.get('sort')] || SORTS.recent, only = q.get('filter');
-        const where = 'name LIKE ?' + (only === 'banned' ? ' AND banned = 1' : '');
-        const total = db.prepare(`SELECT COUNT(*) n FROM players WHERE ${where}`).get(term).n;
-        const rows = db.prepare(`SELECT name, vocation, created_at, updated_at, last_login, last_ip, logins, play_seconds, banned, ban_reason,
-          json_extract(data_json,'$.level') level, json_extract(data_json,'$.gold') gold, json_extract(data_json,'$.deaths') deaths, json_extract(data_json,'$.kills') kills
-          FROM players WHERE ${where} ORDER BY ${order} LIMIT ? OFFSET ?`).all(term, size, page * size);
+        const page = Math.max(0, +q.get('page') || 0), size = 50;
+        const { total, rows } = store.listPlayers({ q: (q.get('q') || '').trim(), sort: q.get('sort'), filter: q.get('filter'), page, size });
         const on = new Set([...players.values()].map(o => o.name.toLowerCase()));
         for (const r of rows) { r.online = on.has(r.name.toLowerCase()); r.voc = (VOC[r.vocation] || {}).name || r.vocation; }
         return adminSend(res, 200, { total, page, size, rows });
       }
       if (route === 'user') {
         const f = findAny(q.get('name')); const d = f.online || f.data; if (!d) return adminSend(res, 404, { error: 'Jogador não encontrado.' });
-        const meta = db.prepare('SELECT created_at, last_login, last_ip, logins, play_seconds, banned, ban_reason FROM players WHERE username = ?').get(f.key) || {};
+        const meta = store.getMeta(f.key) || {};
         const out = {}; for (const k of SAVE_KEYS) if (k !== 'salt' && k !== 'hash') out[k] = d[k];
         out.region = regionName(d.x); out.online = !!f.online; out.vocName = (VOC[d.voc] || {}).name;
         out.invNames = (d.inv || []).map(s => `${s.q}x ${(ITEMS[s.id] || {}).name || s.id}`);
         out.eqNames = Object.fromEntries(Object.entries(d.eq || {}).map(([k, v]) => [k, v ? (ITEMS[v] || {}).name || v : null]));
-        const logs = db.prepare('SELECT ts, type, ip, msg FROM logs WHERE player = ? COLLATE NOCASE ORDER BY ts DESC LIMIT 60').all(d.name);
+        const logs = store.queryLogs({ player: d.name, limit: 60 });
         return adminSend(res, 200, { player: out, meta, logs });
       }
       if (route === 'logs') {
-        const limit = Math.min(500, +q.get('limit') || 200), before = +q.get('before') || 9e15, type = q.get('type'), term = (q.get('q') || '').trim();
-        let sql = 'SELECT id, ts, type, player, ip, msg FROM logs WHERE ts < ?'; const args = [before];
-        if (type) { sql += ' AND type = ?'; args.push(type); }
-        if (term) { sql += ' AND (player LIKE ? OR msg LIKE ? OR ip LIKE ?)'; args.push('%' + term + '%', '%' + term + '%', '%' + term + '%'); }
-        sql += ' ORDER BY ts DESC LIMIT ?'; args.push(limit);
-        return adminSend(res, 200, db.prepare(sql).all(...args));
+        return adminSend(res, 200, store.queryLogs({ limit: Math.min(500, +q.get('limit') || 200), before: +q.get('before') || 9e15, type: q.get('type') || '', q: (q.get('q') || '').trim() }));
       }
     }
     if (req.method === 'POST') {
@@ -793,7 +720,7 @@ async function adminApi(req, res, u) {
       }
       if (route === 'ban') {
         const on = !!b.ban, reason = String(b.reason || '').slice(0, 200);
-        db.prepare('UPDATE players SET banned = ?, ban_reason = ? WHERE username = ?').run(on ? 1 : 0, on ? reason : null, f.key);
+        store.setBan(f.key, on, reason);
         if (on && o) { send(o, { t: 'err', m: 'Sua conta foi bloqueada.' + (reason ? ' Motivo: ' + reason : '') }); try { o.ws.close(); } catch (e) { } leave(o); }
         logEv(on ? 'ban' : 'admin', nm, on ? 'Conta bloqueada' + (reason ? ': ' + reason : '') : 'Conta desbloqueada', ip); return adminSend(res, 200, { ok: true });
       }
@@ -820,7 +747,10 @@ async function adminApi(req, res, u) {
 }
 const server = http.createServer((req, res) => {
   try {
-    let u = decodeURIComponent(req.url.split('?')[0]); if (u === '/') u = '/index.html';
+    let u = decodeURIComponent(req.url.split('?')[0]);
+    const viaR = new URL(req.url, 'http://x').searchParams.get('r');   // ex.: /api/server?r=health (Vercel)
+    if (viaR) u = '/' + viaR.replace(/^\/+/, '');
+    if (u === '/' || u === '/api/server') u = '/index.html';
     if (u === '/admin' || u === '/admin/') u = '/admin/index.html';
     if (u.startsWith('/admin/api/')) return adminApi(req, res, u);
     if (u === '/health') { res.writeHead(200, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*' }); return res.end('ok ' + players.size); }
@@ -841,8 +771,9 @@ const wss = new WebSocketServer({ server, perMessageDeflate: false, maxPayload: 
 wss.on('connection', (ws, req) => {
   let p = null; const ip = clientIp(req);
   ws.isAlive = true; ws.on('pong', () => { ws.isAlive = true; });
-  ws.on('message', raw => { try { onMessage(raw); } catch (e) { console.error('msg', e); } });
-  function onMessage(raw) {
+  let loggingIn = false;
+  ws.on('message', raw => { onMessage(raw).catch(e => console.error('msg', e)); });
+  async function onMessage(raw) {
     let m; try { m = JSON.parse(raw); } catch (e) { return; }
     if (!p) {
       if (m.t !== 'login') return;
@@ -851,6 +782,9 @@ wss.on('connection', (ws, req) => {
       if (!/^[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ ]{2,15}$/.test(name)) return ws.send(JSON.stringify({ t: 'err', m: 'Nome inválido (3-16 letras).' }));
       if (pw.length < 3) return ws.send(JSON.stringify({ t: 'err', m: 'Senha muito curta (mín. 3).' }));
       const key = name.toLowerCase();
+      if (loggingIn) return; loggingIn = true;
+      try { await store.refreshPlayer(key); } finally { loggingIn = false; }
+      if (p || ws.readyState !== 1) return;
       let data = loadPlayer(key);
       if (m.create) {
         if (data) return ws.send(JSON.stringify({ t: 'err', m: 'Esse nome já está em uso. Escolha outro.' }));
@@ -859,7 +793,7 @@ wss.on('connection', (ws, req) => {
       } else {
         if (!data) return ws.send(JSON.stringify({ t: 'err', m: 'Personagem não encontrado. Crie um novo personagem.' }));
         if (hashPw(pw, data.salt) !== data.hash) { logEv('auth', data.name, 'Senha incorreta', ip); return ws.send(JSON.stringify({ t: 'err', m: 'Senha incorreta para este personagem.' })); }
-        const meta = getMeta.get(key);
+        const meta = store.getMeta(key);
         if (meta && meta.banned) { logEv('auth', data.name, 'Tentou entrar, mas a conta está bloqueada', ip); return ws.send(JSON.stringify({ t: 'err', m: 'Esta conta foi bloqueada.' + (meta.ban_reason ? ' Motivo: ' + meta.ban_reason : '') })); }
       }
       for (const o of players.values()) if (o.name.toLowerCase() === key) { send(o, { t: 'err', m: 'Conectado em outro lugar.' }); o.ws.close(); leave(o); }
@@ -871,7 +805,7 @@ wss.on('connection', (ws, req) => {
       sendRegion(p, true);
       msg(p, `Bem-vindo(a) a As Aventuras do Piper, ${p.name}! Fale com o Mestre Aldo (no centro da cidade) para missões.`, '#ffd84a');
       broadcast({ t: 'msg', m: `${p.name} entrou no jogo.`, c: '#8c8' });
-      p.ip = ip; p.since = Date.now(); touchLogin.run(new Date().toISOString(), ip, key);
+      p.ip = ip; p.since = Date.now(); store.touchLogin(key, ip);
       logEv(m.create ? 'create' : 'login', p.name, m.create ? `Criou o personagem (${VOC[p.voc].name})` : `Entrou no jogo (nível ${p.level}, ${REGIONS[regionOf(p.x)].name})`, ip);
       return;
     }
@@ -935,7 +869,7 @@ function leave(p) {
   if (!players.has(p.id)) return;
   persist(p); saveDb();
   const secs = Math.round((Date.now() - (p.since || Date.now())) / 1000);
-  try { addPlayTime.run(secs, p.name.toLowerCase()); } catch (e) { }
+  try { store.addPlayTime(p.name.toLowerCase(), secs); } catch (e) { }
   logEv('logout', p.name, `Saiu do jogo (jogou ${Math.floor(secs / 60)} min)`, p.ip);
   unplace(p); ents.delete(p.id); players.delete(p.id);
   broadcast({ t: 'msg', m: `${p.name} saiu do jogo.`, c: '#888' });
@@ -1055,9 +989,18 @@ process.on('uncaughtException', e => { console.error('erro não tratado (servido
 process.on('unhandledRejection', e => console.error('promessa rejeitada:', e));
 
 setInterval(() => { for (const p of players.values()) persist(p); saveDb(); }, 30000);
-function shutdown() { for (const p of players.values()) persist(p); saveDb(); process.exit(0); }
+async function shutdown() { for (const p of players.values()) persist(p); try { await Promise.race([store.flushAsync(), new Promise(r => setTimeout(r, 4000))]); } catch (e) { } process.exit(0); }
 process.on('SIGINT', shutdown); process.on('SIGTERM', shutdown);
 
 logEv('start', null, `Servidor iniciado (Node ${process.version})` + (ADMIN_PASSWORD ? '' : ' — painel admin desligado: defina ADMIN_PASSWORD'));
 server.on('error', e => { console.error('Não foi possível abrir a porta ' + PORT + ':', e.message); process.exit(1); });
-server.listen(PORT, '0.0.0.0', () => console.log(`As Aventuras do Piper rodando em http://localhost:${PORT} (pronto em ${Date.now() - BOOT} ms)`));
+if (process.env.VERCEL) {
+  // Na Vercel o servidor é uma função (api/server.js). Cada conexão dura no máximo 5 min (plano grátis):
+  // antes disso o servidor pede ao celular para reconectar sozinho, sem o jogador perceber.
+  const RENEW_MS = (+process.env.WS_RENEW_SECONDS || 270) * 1000;
+  wss.on('connection', ws => { const t = setTimeout(() => { try { ws.send(JSON.stringify({ t: 'renew' })); ws.close(4000, 'renew'); } catch (e) { } }, RENEW_MS); ws.on('close', () => clearTimeout(t)); });
+  console.log(`As Aventuras do Piper rodando na Vercel (pronto em ${Date.now() - BOOT} ms)`);
+} else {
+  store.ready.then(() => server.listen(PORT, '0.0.0.0', () => console.log(`As Aventuras do Piper rodando em http://localhost:${PORT} (pronto em ${Date.now() - BOOT} ms)`)));
+}
+module.exports = server;
