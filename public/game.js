@@ -127,7 +127,10 @@
   // e leva até ~1 min para voltar), depois abre o WebSocket com tempo-limite e novas tentativas.
   // Endereço do servidor do jogo. Vazio = o mesmo site (VPS/Docker/Render).
   // Na Vercel, o config.js aponta para o servidor da VPS (ex.: https://jogo.seudominio.com.br).
-  const SERVER = String(window.PIPER_SERVER || '').trim().replace(/\/$/, '');
+  // Também aceita ?server=https://... no endereço (fica salvo no aparelho) — útil para testar outro servidor.
+  const qsServer = (() => { try { const v = new URLSearchParams(location.search).get('server'); if (v) LS.set('piper_server', v); return v; } catch (e) { return null; } })();
+  const SERVER = String(window.PIPER_SERVER || qsServer || LS.get('piper_server') || '').trim().replace(/\/$/, '');
+  const NO_SERVER = !!window.PIPER_NO_SERVER && !SERVER;   // publicado na Vercel sem PIPER_SERVER
   const HTTP_BASE = SERVER ? SERVER + '/' : '';
   const WS_URL = SERVER ? SERVER.replace(/^http/i, 'ws') : (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
   let lastErr = '';   // motivo da desconexão (ex.: expulso pelo administrador)
@@ -145,6 +148,7 @@
     errEl = create ? $('authErr2') : $('authErr'); errEl.textContent = 'Conectando...';
     const name = create ? $('cname').value : $('lname').value, pass = create ? $('cpass').value : $('lpass').value;
     LS.set('piper_name', name);
+    if (NO_SERVER) { connecting = false; errEl.textContent = 'O servidor do jogo ainda não foi configurado neste site. (Administrador: crie a variável PIPER_SERVER na Vercel e publique de novo.)'; return; }
     const ok = await wakeServer(s => { errEl.textContent = `Acordando o servidor... ${s}s (pode levar até 1 minuto)`; });
     if (!ok) { connecting = false; errEl.textContent = 'Servidor fora do ar. Tente novamente em instantes.'; return; }
     errEl.textContent = 'Conectando...';

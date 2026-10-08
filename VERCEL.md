@@ -23,6 +23,8 @@ Por isso o servidor fica na VPS, e a Vercel serve o jogo para o navegador.
 3. Em **Environment Variables**, crie:
    - `PIPER_SERVER` = `https://jogo.seudominio.com.br` (o endereço do servidor da VPS, sem barra no fim).
 4. Clique em **Deploy**. O `vercel.json` já diz o que fazer: não instala nada, só grava o endereço do servidor em `public/config.js` e publica a pasta `public`.
+   Se você publicar **sem** o `PIPER_SERVER`, o site sobe mesmo assim, mas ao tentar entrar aparece o aviso de que o servidor não foi configurado. Crie a variável e faça **Redeploy**.
+   Para testar um servidor sem mexer na Vercel, abra o site com `?server=https://jogo.seudominio.com.br` no final do endereço (o aparelho lembra a escolha).
 5. Abra o endereço da Vercel no celular: o jogo carrega, conecta na VPS e mostra o convite de instalação.
 
 O painel admin também funciona pela Vercel: `https://SEU-PROJETO.vercel.app/admin` (a senha é a mesma do servidor).
