@@ -7,7 +7,7 @@ const WORLD = (function () {
     oak: 'assets/world/oak-sm.png',
     hub: 'assets/world/hub-sm.png',
     rock: 'assets/world/rock-sm.png',
-    grass: 'assets/world/grass-seamless.jpg'
+    grass: 'assets/world/grass-pixel.png'
   };
   const images = {};
   let ready = false;

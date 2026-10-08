@@ -65,6 +65,30 @@ def write_character_motion(rows, destination):
     output.save(destination, optimize=True)
 
 
+def normalize_npc_sheet(source, destination, target_height=111):
+    """Iguala a silhueta dos NPCs à altura visual do personagem principal."""
+    image = Image.open(source).convert('RGBA')
+    base = image.crop((0, 0, 128, 192)).getchannel('A').getbbox()
+    if not base:
+        return
+    scale = target_height / (base[3] - base[1])
+    output = Image.new('RGBA', image.size, (0, 0, 0, 0))
+    columns = image.width // 128
+    for row in range(4):
+        for frame in range(columns):
+            cell = image.crop((frame * 128, row * 192, (frame + 1) * 128, (row + 1) * 192))
+            box = cell.getchannel('A').getbbox()
+            if not box:
+                continue
+            subject = cell.crop(box)
+            size = (max(1, round(subject.width * scale)), max(1, round(subject.height * scale)))
+            subject = subject.resize(size, Image.Resampling.NEAREST)
+            x = frame * 128 + (128 - subject.width) // 2
+            y = row * 192 + 185 - subject.height
+            output.alpha_composite(subject, (x, y))
+    output.save(destination, optimize=True)
+
+
 def character_sheet(source, destination):
     atlas = Image.open(source).convert('RGBA')
     rows = []
@@ -154,7 +178,12 @@ def main():
     parser.add_argument('--sage', type=Path)
     parser.add_argument('--props', type=Path)
     parser.add_argument('--refresh-motion', action='store_true', help='expande as folhas já existentes para 8 quadros de movimento')
+    parser.add_argument('--normalize-npcs', action='store_true', help='iguala a escala visual dos NPCs ao personagem principal')
     args = parser.parse_args()
+    if args.normalize_npcs:
+        for source in CHARS.glob('body_npc_*.png'):
+            normalize_npc_sheet(source, source)
+        return
     if args.refresh_motion:
         # Primeiro quadro de cada folha existente é a pose-base de melhor leitura.
         for source in CHARS.glob('body_*.png'):

@@ -1,7 +1,7 @@
 // Personagens em camadas (paper doll) a partir das folhas PNG geradas — As Aventuras do Piper
 const CHARS = (function () {
   const D = DEFS, SHEETS = {}, cache = new Map();
-  const ASSET_REV = 'motion-pixel-4';
+  const ASSET_REV = 'motion-pixel-5';
   let CW = 128, CH = 192, ready = false;
 
   async function load(onProgress) {

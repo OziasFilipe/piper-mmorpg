@@ -290,12 +290,11 @@ const SPR = (function () {
   const GIMG = {};
   // O mapa preserva as texturas modernas; os personagens e o HUD fazem a
   // leitura clássica de RPG mobile sem transformar o mundo em baixa resolução.
-  const GFILES = ['water-seamless.jpg', 'bridge-h.png', 'bridge-v.png', 'grass-seamless.jpg'];
+  const GFILES = ['water-seamless.jpg', 'grass-pixel.png'];
   GFILES.forEach(n => { const im = new Image(); im.onload = () => { GIMG[n] = im; chunks.clear(); }; im.src = 'assets/world/' + n; });
   const gReady = () => GFILES.every(n => GIMG[n]) && typeof DOMMatrix !== 'undefined';
   function pats(c) {
-    return { water: c.createPattern(GIMG['water-seamless.jpg'], 'repeat'), bh: c.createPattern(GIMG['bridge-h.png'], 'repeat'),
-      bv: c.createPattern(GIMG['bridge-v.png'], 'repeat'), grass: c.createPattern(GIMG['grass-seamless.jpg'], 'repeat') };
+    return { water: c.createPattern(GIMG['water-seamless.jpg'], 'repeat'), grass: c.createPattern(GIMG['grass-pixel.png'], 'repeat') };
   }
   function fillPat(c, pat, tx, ty, sc, dx, dy, w, h) { pat.setTransform(new DOMMatrix([sc, 0, 0, sc, tx, ty])); c.fillStyle = pat; c.fillRect(dx, dy, w, h); }
   const wob = u => 3.4 + 1.4 * Math.sin(u * 0.21) + 0.8 * Math.sin(u * 0.53 + 1.7);
@@ -343,20 +342,28 @@ const SPR = (function () {
     if (!land(s) && !land(e) && land(se)) corner(dx + 32, dy + 32, se, Math.PI);
     if (!land(s) && !land(w) && land(sw)) corner(dx, dy + 32, sw, -Math.PI / 2);
   }
-  function bridgeTile(c, x, y, dx, dy, ox, oy, at, P) {
-    const isB = (xx, yy) => { const q = at(xx, yy); return q === T.BRIDGE || q === T.PATH; };
-    let hx = 0, vy = 0;
-    for (let k = 1; k <= 4; k++) { if (isB(x - k, y)) hx++; else break; }
-    for (let k = 1; k <= 4; k++) { if (isB(x + k, y)) hx++; else break; }
-    for (let k = 1; k <= 4; k++) { if (isB(x, y - k)) vy++; else break; }
-    for (let k = 1; k <= 4; k++) { if (isB(x, y + k)) vy++; else break; }
-    const horiz = hx > vy;
-    if (horiz) { let r0 = y; if (at(x, y - 1) === T.BRIDGE) r0 = y - 1; const rows = at(x, r0 + 1) === T.BRIDGE ? 2 : 1; fillPat(c, P.bh, ox, oy + r0 * 32, rows * 32 / 256, dx, dy, 32, 32); }
-    else { let c0 = x; if (at(x - 1, y) === T.BRIDGE) c0 = x - 1; const cols = at(c0 + 1, y) === T.BRIDGE ? 2 : 1; fillPat(c, P.bv, ox + c0 * 32, oy, cols * 32 / 256, dx, dy, 32, 32); }
-    const endShade = (x0, y0, x1, y1) => { const g = c.createLinearGradient(x0, y0, x1, y1); g.addColorStop(0, 'rgba(40,25,10,.35)'); g.addColorStop(1, 'rgba(40,25,10,0)'); c.fillStyle = g; c.fillRect(dx, dy, 32, 32); };
-    const land = q => q === T.PATH || q === T.SAND;
-    if (horiz) { if (land(at(x - 1, y))) endShade(dx, 0, dx + 5, 0); if (land(at(x + 1, y))) endShade(dx + 32, 0, dx + 27, 0); }
-    else { if (land(at(x, y - 1))) endShade(0, dy, 0, dy + 5); if (land(at(x, y + 1))) endShade(0, dy + 32, 0, dy + 27); }
+  function bridgeTile(c, x, y, dx, dy, at) {
+    // A leitura da direção usa a estrada só como extensão nas extremidades.
+    // Antes, uma estrada paralela podia virar a textura 90° e abrir falhas.
+    const linked = (xx, yy) => { const q = at(xx, yy); return q === T.BRIDGE || q === T.PATH; };
+    const run = (ax, ay) => { let n = 0; for (let k = 1; k <= 4 && linked(x + ax * k, y + ay * k); k++) n++; return n; };
+    const horizontal = run(-1, 0) + run(1, 0) >= run(0, -1) + run(0, 1);
+    const wood = '#8e6038', light = '#bd8a52', dark = '#432819', edge = '#26170f';
+    c.save();
+    if (horizontal) {
+      c.fillStyle = edge; c.fillRect(dx, dy + 2, 32, 28);
+      c.fillStyle = wood; c.fillRect(dx + 2, dy + 4, 28, 24);
+      for (let px = 3; px < 31; px += 7) { c.fillStyle = dark; c.fillRect(dx + px, dy + 4, 1, 24); c.fillStyle = light; c.fillRect(dx + px + 1, dy + 5, 1, 22); }
+      c.fillStyle = '#51311d'; c.fillRect(dx, dy, 32, 3); c.fillRect(dx, dy + 29, 32, 3);
+      c.fillStyle = '#c6975d'; c.fillRect(dx, dy + 1, 32, 1); c.fillRect(dx, dy + 29, 32, 1);
+    } else {
+      c.fillStyle = edge; c.fillRect(dx + 2, dy, 28, 32);
+      c.fillStyle = wood; c.fillRect(dx + 4, dy + 2, 24, 28);
+      for (let py = 3; py < 31; py += 7) { c.fillStyle = dark; c.fillRect(dx + 4, dy + py, 24, 1); c.fillStyle = light; c.fillRect(dx + 5, dy + py + 1, 22, 1); }
+      c.fillStyle = '#51311d'; c.fillRect(dx, dy, 3, 32); c.fillRect(dx + 29, dy, 3, 32);
+      c.fillStyle = '#c6975d'; c.fillRect(dx + 1, dy, 1, 32); c.fillRect(dx + 29, dy, 1, 32);
+    }
+    c.restore();
   }
   function grassTile(c, t, x, y, dx, dy, ox, oy, P) {
     fillPat(c, P.grass, ox, oy, 0.25, dx, dy, 32, 32);
@@ -385,7 +392,7 @@ const SPR = (function () {
     for (let j = 0; j < CHK; j++) for (let i = 0; i < CHK; i++) {
       const x = cx * CHK + i, y = cy * CHK + j, t = at(x, y), dx = i * 32, dy = j * 32;
       if (t === T.WATER) waterOverlay(c, x, y, dx, dy, at);
-      else if (t === T.BRIDGE) bridgeTile(c, x, y, dx, dy, ox, oy, at, P);
+      else if (t === T.BRIDGE) bridgeTile(c, x, y, dx, dy, at);
       else if (t === T.TREE && treeBase(x, y, at) !== T.GRASS) c.drawImage(tile(treeBase(x, y, at), hash(x, y, 9) * 4 | 0, 0), dx, dy, 32, 32);
       else if (t === T.GRASS || t === T.TREE || t === T.FLOWER) grassTile(c, t, x, y, dx, dy, ox, oy, P);
       else c.drawImage(tile(t, hash(x, y, 9) * 4 | 0, 0), dx, dy, 32, 32);
