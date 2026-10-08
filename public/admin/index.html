@@ -209,8 +209,11 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
       ['Online agora', s.online, `pico hoje: ${s.peakToday}`], ['Cadastrados', num(s.users), `${s.newToday} novo(s) hoje`],
       ['Entradas hoje', num(s.loginsToday), `${s.chatsToday} mensagens no chat`], ['Mortes hoje', num(s.deathsToday), `${num(s.monsters)} monstros vivos`],
       ['Bloqueados', s.banned, 'contas'], ['Servidor ligado há', fmtDur(s.uptime), `Node ${esc(s.node)} · XP x${s.xpRate}`],
-      ['Memória', s.memMB + ' MB', `heap ${s.heapMB} MB`], ['Tick do jogo', s.tickAvg + ' ms', `máx ${s.tickMax} ms (limite 100)`]
+      ['Banco de dados', esc(String(s.storage || '?')).toUpperCase(), s.persistent ? 'salvo permanentemente' : '<b style="color:#ff6b6b">TEMPORÁRIO: some ao atualizar</b>'], ['Memória', s.memMB + ' MB', `heap ${s.heapMB} MB`], ['Tick do jogo', s.tickAvg + ' ms', `máx ${s.tickMax} ms (limite 100)`]
     ];
+    let warn = $('dbWarn'); if (!warn) { warn = document.createElement('div'); warn.id = 'dbWarn'; warn.style.cssText = 'background:#5a1d1d;color:#fff;border:1px solid #ff6b6b;border-radius:10px;padding:12px 14px;margin:0 0 14px;line-height:1.45'; $('cards').parentNode.insertBefore(warn, $('cards')); }
+    warn.style.display = s.persistent ? 'none' : 'block';
+    warn.innerHTML = '<b>Atenção: os cadastros não estão sendo salvos em banco.</b> ' + (s.host === 'Vercel' ? 'Na Vercel não existe disco permanente; conecte o Turso (SQLite na nuvem, grátis): Vercel → seu projeto → Storage → Create Database → Turso → Connect → Redeploy.' : 'Instale o better-sqlite3 (npm install) ou use o Docker com o volume /data.');
     $('cards').innerHTML = c.map(([k, v, sub]) => `<div class="card"><div class="k">${k}</div><div class="v">${v}</div><div class="s">${sub}</div></div>`).join('');
     const max = Math.max(1, ...s.byRegion.map(r => r.n));
     $('regionBars').innerHTML = s.byRegion.map(r => `<div><span>${esc(r.name)}</span><i style="width:${r.n / max * 100}%"></i><b>${r.n}</b></div>`).join('');

@@ -115,7 +115,7 @@
     if (pAuto && t - pT > 2200) { pT = t; pDir = [1, 2, 3, 0][pDir]; }
     const action = pWalk ? 'walk' : 'idle';
     const look = CHARS.lookOf(voc, starter(voc), app);
-    const frame = pWalk ? (CHARS.actionFrame(look, 'walk', t) ?? Math.floor(t / 90) % 8) : 0;
+    const frame = pWalk ? (CHARS.actionFrame(look, 'walk', t) ?? Math.floor(t / 90) % 4) : 0;
     const c = $('prevCv'), g = c.getContext('2d'); g.clearRect(0, 0, c.width, c.height); g.imageSmoothingQuality = 'high';
     g.drawImage(CHARS.sprite(look, pDir, frame, action), 0, 0, c.width, c.height);
   }
@@ -635,7 +635,7 @@
       // As folhas novas têm os pés na linha 185/192. A linha do solo é 31,
       // igual aos monstros: antes em 29, o herói parecia levitar.
       const squash = 0;   // sem esticar/achatar: o personagem tem sempre o mesmo tamanho
-      const charW = 42 * scale * (1 + squash), charH = 63 * scale * (1 - squash);
+      const charW = 42 * scale * (1 + squash) * (img.width / 128), charH = 63 * scale * (1 - squash);
       const groundY = sy + 31, footRatio = 185 / 192;
       ctx.drawImage(img, Math.round((sx + 16 - charW / 2 + sway) * K) / K, Math.round((groundY - charH * footRatio) * K) / K, charW, charH);
       ctx.restore(); ctx.imageSmoothingEnabled = false;

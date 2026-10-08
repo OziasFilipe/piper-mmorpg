@@ -808,7 +808,7 @@ const server = http.createServer((req, res) => {
     if (u === '/' || u === '/api/server') u = '/index.html';
     if (u === '/admin' || u === '/admin/') u = '/admin/index.html';
     if (u.startsWith('/admin/api/')) return adminApi(req, res, u);
-    if (u === '/health') { res.writeHead(200, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*' }); return res.end('ok ' + players.size); }
+    if (u === '/health') { res.writeHead(200, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*' }); return res.end('ok ' + players.size + ' ' + store.kind + (store.persistent ? '' : ' TEMPORARIO')); }
     const f = path.join(PUBLIC, path.normalize(u).replace(/^(\.\.[\/\\])+/, ''));
     if (!f.startsWith(PUBLIC)) { res.writeHead(403); return res.end(); }
     let c; try { c = loadFile(f); } catch (e) { res.writeHead(404); return res.end('404'); }

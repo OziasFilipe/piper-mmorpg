@@ -2,8 +2,9 @@
   "action": "walk",
   "sheet": "walk.png",
   "cell": [128, 192],
-  "frames": 8,
-  "fps": 18,
+  "frames": 4,
+  "fps": 8,
   "loop": true,
-  "ground": 185
+  "ground": 185,
+  "normalized": true
 }

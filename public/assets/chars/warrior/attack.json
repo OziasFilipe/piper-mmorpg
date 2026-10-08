@@ -1,9 +1,10 @@
 {
   "action": "attack",
   "sheet": "attack.png",
-  "cell": [128, 192],
+  "cell": [192, 192],
   "frames": 3,
   "fps": 10,
   "loop": false,
-  "ground": 185
+  "ground": 185,
+  "normalized": true
 }

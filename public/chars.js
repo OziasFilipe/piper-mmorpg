@@ -1,7 +1,7 @@
 // Personagens em camadas (paper doll) a partir das folhas PNG geradas — As Aventuras do Piper
 const CHARS = (function () {
   const D = DEFS, SHEETS = {}, ANIMATIONS = {}, cache = new Map();
-  const ASSET_REV = 'motion-pixel-actions-4';
+  const ASSET_REV = 'hero-gpt-1';
   let CW = 128, CH = 192, ready = false;
 
   async function load(onProgress) {
@@ -72,9 +72,17 @@ const CHARS = (function () {
       return x1 < 0 ? null : { y1, h: y1 - y0 + 1, cx: (x0 + x1 + 1) / 2 };
     } catch (e) { return null; }
   }
+  function clipFor(look, action) {
+    const [, voc, armor, , weapon] = look.split('|');
+    if (weapon === 'spear' || armor === 'n_apron' || armor === 'n_green' || armor === 'n_white' || voc === 'npc') return null;
+    const clip = ANIMATIONS[voc === 'wizard' ? 'wizard' : 'warrior']?.[action];
+    return clip && clip.image ? clip : null;
+  }
   function sprite(look, dir, frame, action = 'idle') {
     const raw = rawSprite(look, dir, frame, action);
     if (!ready) return raw;
+    // Folhas já alinhadas na produção (pés em 185, mesma escala): desenha direto, sem reajuste.
+    if (clipFor(look, action)?.normalized) return raw;
     const key = look + '#' + dir + '#' + frame + '#' + action;
     let out = ncache.get(key); if (out) return out;
     const nk = look + '#' + dir + '#' + action;
@@ -108,12 +116,15 @@ const CHARS = (function () {
     else if (armor === 'n_apron') body = 'body_npc_blacksmith';
     else if (armor === 'n_green') body = 'body_npc_healer';
     else if (armor === 'n_white' || voc === 'npc') body = 'body_npc_sage';
-    const actor = voc === 'wizard' ? 'wizard' : 'warrior';
-    const clip = ANIMATIONS[actor] && ANIMATIONS[actor][action];
-    if (clip && clip.image && weapon !== 'spear' && armor !== 'n_apron' && armor !== 'n_green' && armor !== 'n_white' && voc !== 'npc') {
-      const count = Math.max(1, clip.frames | 0 || Math.floor(clip.image.width / CW));
+    const clip = clipFor(look, action);
+    if (clip) {
+      // Uma ação pode ter células mais largas (ex.: ataque com a espada estendida); o personagem
+      // continua centralizado e com a mesma escala, só sobra espaço dos lados.
+      const cw = (clip.cell && clip.cell[0]) || CW;
+      if (cw !== CW) { c.width = cw; }
+      const count = Math.max(1, clip.frames | 0 || Math.floor(clip.image.width / cw));
       const clipFrame = clip.loop ? ((frame % count) + count) % count : Math.max(0, Math.min(count - 1, frame | 0));
-      g.drawImage(clip.image, clipFrame * CW, dir * CH, CW, CH, 0, 0, CW, CH);
+      g.drawImage(clip.image, clipFrame * cw, dir * CH, cw, CH, 0, 0, cw, CH);
       if (ready) cache.set(key, c);
       return c;
     }
@@ -136,7 +147,7 @@ const CHARS = (function () {
     const [, voc] = look.split('|');
     const clip = ANIMATIONS[voc === 'wizard' ? 'wizard' : 'warrior']?.[action];
     if (!clip) return null;
-    const count = Math.max(1, clip.frames | 0 || Math.floor(clip.image.width / CW));
+    const count = Math.max(1, clip.frames | 0 || Math.floor(clip.image.width / ((clip.cell && clip.cell[0]) || CW)));
     const index = Math.floor(Math.max(0, elapsed) * (clip.fps || 12) / 1000);
     return clip.loop ? index % count : Math.min(count - 1, index);
   }
