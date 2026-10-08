@@ -36,6 +36,7 @@
     { dx: -8, dy: -8, kind: 'forge' }, { dx: 5, dy: -8, kind: 'potion' },
     { dx: -8, dy: 5, kind: 'guild' }, { dx: 5, dy: 5, kind: 'travel' }
   ];
+  const townLamps = [[-3, -3], [4, -3], [-3, 4], [4, 4], [-1, -9], [2, -9], [-1, 9], [2, 9]];
 
   // ======================================================== ABERTURA
   const show = (id, on) => $(id).style.display = on ? (id === 'game' || id === 'title' ? 'block' : 'flex') : 'none';
@@ -491,11 +492,20 @@
       // o herói não aparece por cima de um prédio quando está atrás dele.
       for (const shop of townShops) if (y === CY + shop.dy + 2) {
         const img = SPR.townShop(shop.kind);
-        ctx.drawImage(img, (CX + shop.dx) * TS + ox, (CY + shop.dy) * TS + oy - 16);
+        ctx.drawImage(img, (CX + shop.dx) * TS + ox, (CY + shop.dy) * TS + oy - 16, 128, 112);
       }
       if (y === CY + 1) {
-        const fountain = SPR.townFountain();
-        ctx.drawImage(fountain, CX * TS + ox, CY * TS + oy - 8);
+        const fountain = SPR.townFountain(), fh = Math.round(fountain.height * 64 / fountain.width);
+        // A fonte nova tem cantos vazados: piso de pedra por baixo, no lugar da água dos 2x2 tiles.
+        if (fountain.naturalWidth) for (let dy = 0; dy < 2; dy++) for (let dx = 0; dx < 2; dx++)
+          ctx.drawImage(SPR.tile(T.FLOOR, (dx + dy * 3) % 4, 0), (CX + dx) * TS + ox, (CY + dy) * TS + oy, TS, TS);
+        ctx.drawImage(fountain, CX * TS + ox, CY * TS + oy + 64 - fh, 64, fh);
+      }
+      // Lampiões em volta da praça (só decoração).
+      const lamp = SPR.townLamp();
+      if (lamp) for (const [lx, ly] of townLamps) if (y === CY + ly) {
+        const lh = 64, lw = Math.round(lamp.width * 64 / lamp.height);
+        ctx.drawImage(lamp, (CX + lx) * TS + ox + 16 - lw / 2, (CY + ly) * TS + oy + 30 - lh, lw, lh);
       }
       for (let x = x0; x <= x1; x++) {
         const t = tileAt(x, y);

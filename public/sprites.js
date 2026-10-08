@@ -110,7 +110,14 @@ const SPR = (function () {
 
   // Fachadas do centro: mantêm a leitura pixel-art e encaixam exatamente nos
   // 4 x 3 tiles de parede que o servidor marca como sólidos.
+  // Arte da cidade pintada (2x da resolução do mundo). Enquanto não carrega, usa a versão desenhada no código.
+  const TOWN = {};
+  ['shop-forge', 'shop-potion', 'shop-guild', 'shop-travel', 'fountain', 'lamp'].forEach(n => {
+    const im = new Image(); im.onload = () => { TOWN[n] = im; }; im.src = 'assets/world/town/' + n + '.png?v=gpt1';
+  });
+  function townLamp() { return TOWN.lamp || null; }
   function townShop(kind) {
+    if (TOWN['shop-' + kind]) return TOWN['shop-' + kind];
     return memo('town-shop-' + kind, () => {
       const c = mk(128, 112), g = c.getContext('2d');
       g.imageSmoothingEnabled = false;
@@ -153,6 +160,7 @@ const SPR = (function () {
     });
   }
   function townFountain() {
+    if (TOWN.fountain) return TOWN.fountain;
     return memo('town-fountain', () => {
       const c = mk(64, 72), g = c.getContext('2d');
       g.imageSmoothingEnabled = false;
@@ -490,5 +498,5 @@ const SPR = (function () {
   }
   const resetGround = () => chunks.clear();
 
-  return { tile, drawGround, resetGround, treeObj, rockObj, townShop, townFountain, entity, itemIcon, spellIcon, hash, mk };
+  return { tile, drawGround, resetGround, treeObj, rockObj, townShop, townFountain, townLamp, entity, itemIcon, spellIcon, hash, mk };
 })();
