@@ -26,6 +26,8 @@
   let RX = 0, REG = D.REGIONS[0];   // região carregada (x inicial no mundo) e seus dados
   let me = {}, inv = [], eq = {}, stats = {}, task = null, myLook = '';
   const ents = new Map(); let fxs = []; const speech = new Map();
+  let friends = [], frSig = '', frReqs = [];   // amigos: [nome, online, região, x, y, nível]
+  const isFriend = n => friends.some(f => f[0].toLowerCase() === String(n || '').toLowerCase());
   let miniImg = null, shopData = null, shopTab = 'buy', selSpell = 0, selItem = null;
   let K = 1, UI = 1, LWW = 0, LHH = 0, mobileMode = false; // escala mundo->dispositivo, fator de texto, tamanho lógico da tela
   const LS = { get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (e) { } } };
@@ -55,7 +57,7 @@
   $('splash').onclick = showTitle;
   function showTitle() {
     if (titleShown) return; titleShown = true; timers.forEach(clearTimeout);
-    show('splash', false); show('title', true); onLoaded();
+    show('splash', false); show('title', true); onLoaded(); playMusic('title');
   }
   function onLoaded() {
     if (!titleShown) return;
@@ -150,7 +152,7 @@
     sock.onerror = () => { };
     sock.onclose = () => {
       clearTimeout(connTimer); connecting = false;
-      if (inGame) { inGame = false; show('game', false); show('title', true); $('authErr').textContent = 'Conexão perdida. Entre novamente.'; setTab('login'); }
+      if (inGame) { inGame = false; playMusic('title'); show('game', false); show('title', true); $('authErr').textContent = 'Conexão perdida. Entre novamente.'; setTab('login'); }
       else if (errEl && /Conectando/.test(errEl.textContent)) errEl.textContent = 'Não foi possível conectar ao servidor.';
     };
   }
@@ -163,10 +165,13 @@
         myId = m.id; loadRegion(m); inGame = true; connecting = false; ents.clear(); fxs = []; $('feed').innerHTML = ''; $('chatLog').innerHTML = '';
         show('title', false); show('game', true); resize(); break;
       }
-      case 'region': closeModals(); loadRegion(m); break;
+      case 'loading': showLoading(m.to); sfx('portal', 500); break;
+      case 'region': closeModals(); loadRegion(m); finishLoading(); break;
       case 'travel': openMap('world', m); break;
       case 's': onState(m); break;
-      case 'msg': addLog(m.m, m.c); break;
+      case 'msg': addLog(m.m, m.c); if ($('mPanel').style.display === 'flex' && curTab === 'friends') renderFriends(true); break;
+      case 'fr': friends = m.l || []; updFriendBadge(); if ($('mPanel').style.display === 'flex' && curTab === 'friends') renderFriends(); break;
+      case 'freq': if (!frReqs.some(r => r.from === m.from)) frReqs.push(m); showFriendReq(); sfx('friend', 500); break;
       case 'chat': addLog(`${m.name} [${m.lv}]: ${m.m}`, '#ffe14a'); speech.set(m.id, { text: m.m, t0: performance.now() }); break;
       case 'shop': shopData = m; shopTab = 'buy'; openShop(); break;
       case 'dialog': openDialog(m.name, m.text); break;
@@ -188,6 +193,10 @@
     const now = performance.now();
     if (m.me.inv) { inv = m.me.inv; eq = m.me.eq; stats = m.me.st; task = m.me.task; }
     Object.assign(me, m.me);
+    // música: cidade, campo ou batalha (fica em batalha até 5 s depois do último golpe)
+    if (me.hp < lastHp) lastCombat = now; lastHp = me.hp;
+    if (me.tg) { const t = ents.get(me.tg); if (t && t.kind === 'm') lastCombat = now; }
+    if (!loadingOn) playMusic(me.town ? 'town' : now - lastCombat < 5000 ? 'battle' : 'field');
     const seen = new Set();
     for (const a of m.e) {
       const [id, kind, x, y, dir, look, name, hp, flags, lv, attackMs] = a; seen.add(id);
@@ -209,7 +218,7 @@
     }
     for (const id of ents.keys()) if (!seen.has(id)) ents.delete(id);
     for (const f of m.fx) {
-      f.t0 = now; fxs.push(f);
+      f.t0 = now; fxs.push(f); fxSound(f);
       if (f.k === 'hit' && f.id) { const target = ents.get(f.id); if (target) target.hitUntil = now + 170; }
     }
     if (m.me.inv) renderPanels();
@@ -243,9 +252,48 @@
     MW = m.W; MH = m.H; RX = m.ox || 0; CX = RX + (MW >> 1); CY = MH >> 1; REG = D.REGIONS[m.r] || D.REGIONS[0];
     const bin = atob(m.tiles); tiles = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) tiles[i] = bin.charCodeAt(i);
     buildMini(); ents.clear(); fxs = []; if (SPR.resetGround) SPR.resetGround();
-    const b = $('regionBanner'); if (b) { b.innerHTML = `<small>${REG.town}</small>${REG.name}`; b.classList.remove('on'); void b.offsetWidth; b.classList.add('on'); }
+    const b = $('regionBanner'); if (b && !loadingOn) { b.innerHTML = `<small>${REG.town}</small>${REG.name}`; b.classList.remove('on'); void b.offsetWidth; b.classList.add('on'); }
   }
   const MINI_COL = ['#4b8d3b', '#2a5f2a', '#2b5fae', '#d8c07c', '#8f877a', '#555555', '#3f3228', '#9b7b4f', '#8a8178', '#5c9f46', '#8b5e34', '#1a1410', '#e8eef5', '#9aa3ad'];
+  // ---- Música e efeitos sonoros (music.js)
+  let lastHp = 1e9, lastCombat = -1e9; const sfxAt = {};
+  function playMusic(name) { if (window.MUSIC) MUSIC.play(name, REG ? REG.id : 0); }
+  function sfx(name, gap) { if (!window.MUSIC) return; const t = performance.now(); if (t - (sfxAt[name] || 0) < (gap || 70)) return; sfxAt[name] = t; MUSIC.sfx(name); }
+  function fxSound(f) {
+    const meE = ents.get(myId); if (!meE || Math.abs(f.x - meE.x) > 9 || Math.abs(f.y - meE.y) > 7) return;   // só o que está na tela
+    if (f.k === 'hit') sfx('hit', 90); else if (f.k === 'swing') sfx('swing', 90); else if (f.k === 'proj') sfx('spell', 120);
+    else if (f.k === 'heal') sfx('heal', 300); else if (f.k === 'level' && f.x === meE.x && f.y === meE.y && !loadingOn) sfx('level', 1500);
+  }
+  function updSoundBtns() { const on = !(window.MUSIC && MUSIC.muted); document.querySelectorAll('.sndBtn').forEach(b => b.classList.toggle('off', !on)); }
+  document.querySelectorAll('.sndBtn').forEach(b => {
+    b.addEventListener('pointerdown', e => e.stopPropagation());
+    b.onclick = e => { e.stopPropagation(); if (window.MUSIC) { MUSIC.unlock(); MUSIC.setMuted(!MUSIC.muted); } updSoundBtns(); };
+  });
+  updSoundBtns();
+  // ---- Tela de carregamento ao trocar de terra
+  let loadingOn = false, loadT0 = 0;
+  const TIPS = ['Dica: o portal do leste leva à próxima terra; o do oeste volta para a anterior.',
+    'Dica: toque no botão de amigos para ver quem está online e onde.', 'Dica: poções de vida e mana ficam nos botões vermelho e azul.',
+    'Dica: dentro da cidade os monstros não atacam e a vida volta mais rápido.', 'Dica: cada nível dá pontos de atributo. Use-os em Personagem.'];
+  function showLoading(to) {
+    const r = D.REGIONS[to] || D.REGIONS[0], L = $('loading');
+    loadingOn = true; loadT0 = performance.now(); setWalk(-1); closeModals();
+    $('ldName').textContent = r.name; $('ldTown').textContent = `${r.town} · Nível recomendado ${r.lvl}+`;
+    $('ldTip').textContent = TIPS[Math.random() * TIPS.length | 0];
+    $('ldBar').style.transition = 'none'; $('ldBar').style.width = '0'; L.style.display = 'flex'; void L.offsetWidth;
+    L.classList.add('on'); $('ldBar').style.transition = ''; $('ldBar').style.width = '65%';
+  }
+  function finishLoading() {
+    if (!loadingOn) return;
+    $('ldBar').style.width = '100%';
+    // espera o mapa novo ser desenhado (2 quadros) e um tempo mínimo para não "piscar"
+    const wait = Math.max(0, 1300 - (performance.now() - loadT0));
+    requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(() => {
+      const L = $('loading'); L.classList.remove('on'); loadingOn = false;
+      setTimeout(() => { if (!loadingOn) L.style.display = 'none'; }, 380);
+      const b = $('regionBanner'); if (b) { b.innerHTML = `<small>${REG.town}</small>${REG.name}`; b.classList.remove('on'); void b.offsetWidth; b.classList.add('on'); }
+    }, wait)));
+  }
   function buildMini() {
     miniImg = SPR.mk(MW, MH); const g = miniImg.getContext('2d'); const id = g.createImageData(MW, MH);
     for (let i = 0; i < MW * MH; i++) { const c = parseInt(MINI_COL[tiles[i]].slice(1), 16); id.data.set([c >> 16, (c >> 8) & 255, c & 255, 255], i * 4); }
@@ -286,12 +334,13 @@
     }
     cam.t = now;
     const camX = cam.x, camY = cam.y;
-    const ox = Math.round(-camX * TS * K) / K, oy = Math.round(-camY * TS * K) / K;   // pixel inteiro do aparelho: sem tremido cam.ox = ox; cam.oy = oy;
+    const ox = Math.round(-camX * TS * K) / K, oy = Math.round(-camY * TS * K) / K; cam.ox = ox; cam.oy = oy;   // pixel inteiro do aparelho: sem tremido
     ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = '#000'; ctx.fillRect(0, 0, cv.width, cv.height);
     ctx.setTransform(K, 0, 0, K, 0, 0); ctx.imageSmoothingEnabled = false;
     const x0 = Math.floor(camX) - 1, y0 = Math.floor(camY) - 1, x1 = x0 + Math.ceil(LWW / TS) + 2, y1 = y0 + Math.ceil(LHH / TS) + 3;
     const wf = Math.floor(now / 350) % 7;
     SPR.drawGround(ctx, x0, y0, x1, y1, ox, oy, now, tileAt, K);
+    for (const pt of D.portalsOf(REG.id)) { const wx = RX + pt.x; if (wx >= x0 - 2 && wx <= x1 + 2 && pt.y >= y0 - 3 && pt.y <= y1 + 3) drawPortal(pt, wx, now, ox, oy); }
     for (const f of fxs) {
       const age = now - f.t0, sx = f.x * TS + ox, sy = f.y * TS + oy;
       if (f.k === 'blood' && age < 1500) { ctx.globalAlpha = 1 - age / 1500; ctx.fillStyle = '#9a0a0a'; ctx.beginPath(); ctx.ellipse(sx + 16, sy + 24, 7, 3, 0, 0, 7); ctx.fill(); ctx.globalAlpha = 1; }
@@ -319,14 +368,20 @@
       for (let x = x0; x <= x1; x++) {
         const t = tileAt(x, y);
         if (t === T.TREE) {
-          if (WORLD.oak) {
+          const pine = WORLD.pine && SPR.hash(x, y, 41) > .68;
+          if (WORLD.oak || pine) {
             const variant = SPR.hash(x, y, 3);
-            const w = 50 + (variant * 7 | 0), h = 65 + (variant * 8 | 0);
-            ctx.drawImage(WORLD.oak, x * TS + ox + 16 - w / 2, y * TS + oy + TS - h, w, h);
+            const w = pine ? 43 + (variant * 5 | 0) : 50 + (variant * 7 | 0);
+            const h = pine ? 72 + (variant * 8 | 0) : 65 + (variant * 8 | 0);
+            ctx.drawImage(pine ? WORLD.pine : WORLD.oak, x * TS + ox + 16 - w / 2, y * TS + oy + TS - h, w, h);
           } else ctx.drawImage(SPR.treeObj(SPR.hash(x, y, 3) * 6 | 0), x * TS + ox - 8, y * TS + oy - 26);
         }
         else if (t === T.ROCK || t === T.SNOWROCK) {
-          if (WORLD.rock) ctx.drawImage(WORLD.rock, x * TS + ox - 4, y * TS + oy - 8, 40, 40);
+          const mossy = t === T.ROCK && WORLD.mossRock && SPR.hash(x, y, 59) > .52;
+          if (WORLD.rock || mossy) {
+            const size = mossy ? 48 : 40;
+            ctx.drawImage(mossy ? WORLD.mossRock : WORLD.rock, x * TS + ox + 16 - size / 2, y * TS + oy + TS - size, size, size);
+          }
           else ctx.drawImage(SPR.rockObj(0), x * TS + ox, y * TS + oy);
         }
       }
@@ -344,7 +399,7 @@
       const top = isC ? (mobileMode ? 34 : 24) : (e.look === 'dragon' || e.look === 'troll' || e.look === 'bear' ? (mobileMode ? 22 : 14) : (mobileMode ? 12 : 4));
       const sy = p.y * TS + oy - top;
       const pct = e.hp / 100, hc = pct > 0.6 ? '#3fd35a' : pct > 0.3 ? '#f2c14e' : '#ef4444';
-      const nc = e.kind === 'n' ? '#9fd8ff' : e.kind === 'p' ? ((e.flags & 1) ? '#ff6b6b' : '#ffffff') : hc;
+      const nc = e.kind === 'n' ? '#9fd8ff' : e.kind === 'p' ? ((e.flags & 1) ? '#ff6b6b' : e.id !== myId && isFriend(e.name) ? '#5cf08a' : '#ffffff') : hc;
       ctx.font = `700 ${11 * UI}px Poppins, sans-serif`;
       txt(e.name + (e.kind === 'p' && (e.flags & 1) ? ' ☠' : ''), sx, sy - 5 * UI, nc);
       if (e.kind !== 'n') { const bw = 26, bh = Math.max(2, 3.5 * UI); ctx.fillStyle = 'rgba(0,0,0,.75)'; ctx.fillRect(sx - bw / 2 - 0.5, sy - 1, bw + 1, bh + 1); ctx.fillStyle = hc; ctx.fillRect(sx - bw / 2, sy - 0.5, bw * pct, bh); }
@@ -353,6 +408,38 @@
     }
     fxs = fxs.filter(f => drawFx(f, now, ox, oy));
     drawMini(meE);
+  }
+  // Portal mágico: anel de pedra com redemoinho animado e faíscas subindo.
+  function drawPortal(pt, wx, now, ox, oy) {
+    const cx = (wx + 0.5) * TS + ox, cy = (pt.y + 1) * TS + oy - 6, rx = TS * 0.78, ry = TS * 1.22, t = now / 1000;
+    const dest = D.REGIONS[pt.to], locked = me.lv < dest.lvl;
+    const c1 = locked ? '#7a7a8a' : pt.back ? '#ffb347' : '#b36bff', c2 = locked ? '#3a3a48' : pt.back ? '#ff6a1a' : '#4fd1ff';
+    ctx.save();
+    // brilho no chão
+    const glow = ctx.createRadialGradient(cx, cy + ry * 0.85, 2, cx, cy + ry * 0.85, rx * 1.8);
+    glow.addColorStop(0, c1 + '88'); glow.addColorStop(1, c1 + '00');
+    ctx.fillStyle = glow; ctx.beginPath(); ctx.ellipse(cx, cy + ry * 0.85, rx * 1.8, rx * 0.7, 0, 0, 7); ctx.fill();
+    // arco de pedra
+    ctx.lineWidth = 7; ctx.strokeStyle = '#3d3a44'; ctx.beginPath(); ctx.ellipse(cx, cy, rx + 4, ry + 4, 0, 0, 7); ctx.stroke();
+    ctx.lineWidth = 3; ctx.strokeStyle = '#8b8698'; ctx.beginPath(); ctx.ellipse(cx, cy, rx + 4, ry + 4, 0, Math.PI * 1.05, Math.PI * 1.95); ctx.stroke();
+    for (let i = 0; i < 8; i++) { const a = i / 8 * Math.PI * 2; ctx.fillStyle = i % 2 ? '#5b5766' : '#6c6878'; ctx.fillRect(cx + Math.cos(a) * (rx + 4) - 2.5, cy + Math.sin(a) * (ry + 4) - 2.5, 5, 5); }
+    // redemoinho
+    ctx.beginPath(); ctx.ellipse(cx, cy, rx, ry, 0, 0, 7); ctx.clip();
+    const g = ctx.createRadialGradient(cx, cy, 1, cx, cy, ry); g.addColorStop(0, '#ffffff'); g.addColorStop(0.25, c2); g.addColorStop(0.75, c1); g.addColorStop(1, '#14082a');
+    ctx.fillStyle = g; ctx.fillRect(cx - rx, cy - ry, rx * 2, ry * 2);
+    ctx.globalCompositeOperation = 'lighter'; ctx.lineWidth = 2.2;
+    for (let k = 0; k < 5; k++) {
+      const a0 = t * (locked ? 0.6 : 2.4) + k * 1.2566; ctx.strokeStyle = `rgba(255,255,255,${0.18 + k * 0.05})`;
+      ctx.beginPath(); for (let i = 0; i <= 18; i++) { const a = a0 + i * 0.22, rr = (1 - i / 18) * 0.95; const x = cx + Math.cos(a) * rx * rr, y = cy + Math.sin(a) * ry * rr; i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); } ctx.stroke();
+    }
+    ctx.restore();
+    // faíscas subindo
+    if (!locked) { ctx.save(); ctx.globalCompositeOperation = 'lighter'; for (let i = 0; i < 7; i++) { const ph = (t * 0.7 + i / 7) % 1, x = cx + Math.sin(i * 2.1 + t * 2) * rx * 0.9, y = cy + ry - ph * ry * 2.4; ctx.globalAlpha = 1 - ph; ctx.fillStyle = i % 2 ? c1 : '#fff'; ctx.fillRect(x - 1.5, y - 1.5, 3, 3); } ctx.restore(); }
+    // placa com o destino
+    ctx.font = `700 ${10.5 * UI}px Poppins, sans-serif`; ctx.textAlign = 'center';
+    txt((pt.back ? '◂ ' : '') + dest.name + (pt.back ? '' : ' ▸'), cx, cy - ry - 12, locked ? '#ff9a9a' : '#f1dcff');
+    ctx.font = `600 ${9 * UI}px Poppins, sans-serif`;
+    txt(locked ? `Nível ${dest.lvl} necessário` : 'Portal', cx, cy - ry - 1, locked ? '#ffb3b3' : '#cfe9ff');
   }
   function txt(s, x, y, c) { ctx.lineWidth = 3 * UI; ctx.strokeStyle = 'rgba(0,0,0,.85)'; ctx.lineJoin = 'round'; ctx.strokeText(s, x, y); ctx.fillStyle = c; ctx.fillText(s, x, y); }
   function wrapTxt(s, x, y, c) {
@@ -395,12 +482,15 @@
       ctx.restore(); ctx.imageSmoothingEnabled = false;
       return;
     }
-    const enemySprite = e.kind === 'm' && ENEMIES.sprite(e.look, frame);
+    const enemySprite = e.kind === 'm' && ENEMIES.sprite(e.look, frame, e.dir === 1);
     const img = enemySprite || SPR.entity(e.kind, e.look, e.dir, frame, e.faceLeft);
     const elite = e.look === 'bear' || e.look === 'troll' || e.look === 'dragon';
     const scale = mobileMode ? 1.15 : 1;
-    const iw = (enemySprite ? (e.look === 'dragon' ? 70 : elite ? 51 : 43) : img.width) * scale;
-    const ih = (enemySprite ? (e.look === 'dragon' ? 70 : elite ? 51 : 43) : img.height) * scale;
+    // O coelho tem silhueta leve e orelhas altas; uma caixa um pouco maior
+    // preserva sua leitura no chão sem transformá-lo em um inimigo grande.
+    const enemySize = e.look === 'dragon' ? 70 : elite ? 51 : e.look === 'rabbit' ? 50 : 43;
+    const iw = (enemySprite ? enemySize : img.width) * scale;
+    const ih = (enemySprite ? enemySize : img.height) * scale;
     const idleBob = enemySprite && !p.moving ? Math.sin(now / 300 + e.id) * .8 : 0;
     ctx.fillStyle = 'rgba(0,0,0,.28)'; ctx.beginPath(); ctx.ellipse(sx + 16, sy + 29, iw > 40 ? 16 : 10, 4, 0, 0, 7); ctx.fill();
     ctx.save(); ctx.translate(dir[0] * attackStep, dir[1] * attackStep * .45);
@@ -477,7 +567,20 @@
     g.imageSmoothingEnabled = false; g.fillStyle = '#000'; g.fillRect(0, 0, 260, 260);
     g.drawImage(miniImg, meE.x - RX - R, meE.y - R, R * 2, R * 2, 2, 2, 256, 256);
     for (const e of ents.values()) { if (e.id === myId) continue; g.fillStyle = e.kind === 'm' ? '#ff4d4d' : e.kind === 'n' ? '#4dd2ff' : '#fff'; g.fillRect(2 + (e.x - meE.x + R) * S, 2 + (e.y - meE.y + R) * S, 5, 5); }
+    for (const pt of D.portalsOf(REG.id)) { const dx = (pt.x - (meE.x - RX)) * S, dy = (pt.y + 0.5 - meE.y) * S; if (Math.abs(dx) < 126 && Math.abs(dy) < 126) { g.fillStyle = '#000'; g.beginPath(); g.ellipse(130 + dx, 130 + dy, 7, 10, 0, 0, 7); g.fill(); g.fillStyle = pt.back ? '#ffb347' : '#c084ff'; g.beginPath(); g.ellipse(130 + dx, 130 + dy, 5, 8, 0, 0, 7); g.fill(); } }
+    // amigos na mesma região: ponto verde (se estiver longe, fica na borda apontando a direção)
+    for (const f of friends) {
+      if (!f[1] || f[2] !== REG.id || f[0] === me.name) continue;
+      let dx = (f[3] - (meE.x - RX)) * S, dy = (f[4] - meE.y) * S; const d = Math.hypot(dx, dy), lim = 112;
+      const far = d > lim; if (far) { dx = dx / d * lim; dy = dy / d * lim; }
+      greenDot(g, 130 + dx, 130 + dy, far ? 7 : 9);
+    }
     g.fillStyle = '#fff'; g.beginPath(); g.arc(130, 130, 5, 0, 7); g.fill(); g.strokeStyle = '#000'; g.lineWidth = 2; g.stroke();
+  }
+  function greenDot(g, x, y, r) {
+    g.beginPath(); g.arc(x, y, r + 2.5, 0, 7); g.fillStyle = 'rgba(0,0,0,.75)'; g.fill();
+    g.beginPath(); g.arc(x, y, r, 0, 7); g.fillStyle = '#35e06b'; g.fill();
+    g.beginPath(); g.arc(x - r * .3, y - r * .3, r * .38, 0, 7); g.fillStyle = 'rgba(255,255,255,.75)'; g.fill();
   }
   requestAnimationFrame(render);
 
@@ -529,7 +632,12 @@
     drawIcon($('cast').querySelector('canvas'), SPR.spellIcon(s.id));
   }
   const cast = () => { const s = spells()[selSpell]; if (s) send({ t: 'spell', s: s.id }); };
-  document.querySelectorAll('#acts .sp').forEach(b => b.addEventListener('pointerdown', e => { e.preventDefault(); setSel(+b.dataset.i); }));
+  document.querySelectorAll('#acts .sp').forEach(b => b.addEventListener('pointerdown', e => {
+    e.preventDefault(); setSel(+b.dataset.i);
+    // No PC, cada slot funciona como uma hotbar: clique seleciona e lança.
+    // No toque, preserva-se a seleção antes do botão grande de lançar.
+    if (!mobileMode) cast();
+  }));
   $('cast').addEventListener('pointerdown', e => { e.preventDefault(); cast(); });
   $('potHp').addEventListener('pointerdown', e => { e.preventDefault(); send({ t: 'quick', k: 'hp' }); });
   $('potMp').addEventListener('pointerdown', e => { e.preventDefault(); send({ t: 'quick', k: 'mp' }); });
@@ -539,7 +647,7 @@
   const closeModals = () => modals.forEach(m => $(m).style.display = 'none');
   document.querySelectorAll('[data-close]').forEach(b => b.onclick = closeModals);
   modals.forEach(m => $(m).addEventListener('pointerdown', e => { if (e.target.id === m) closeModals(); }));
-  document.querySelectorAll('.ib').forEach(b => b.onclick = () => { const k = b.dataset.open; if (k === 'map') return openMap('region'); if (k === 'chat') { closeModals(); $('mChat').style.display = 'flex'; $('chatLog').scrollTop = 1e9; } else openPanel(k); });
+  document.querySelectorAll('.ib[data-open]').forEach(b => b.onclick = () => { const k = b.dataset.open; if (k === 'map') return openMap('region'); if (k === 'chat') { closeModals(); $('mChat').style.display = 'flex'; $('chatLog').scrollTop = 1e9; } else openPanel(k); });
   $('portrait').onclick = () => openPanel('stats');
   document.querySelectorAll('.tabs2 [data-tab]').forEach(b => b.onclick = () => openPanel(b.dataset.tab));
   let curTab = 'inv';
@@ -576,8 +684,20 @@
       g.textAlign = 'center'; g.font = '700 15px Poppins, sans-serif';
       for (const l of REG.labels || []) { const lx = x0 + l.x * k, ly = y0 + l.y * k; g.lineWidth = 4; g.strokeStyle = 'rgba(0,0,0,.8)'; g.strokeText(l.t, lx, ly); g.fillStyle = '#ffe9b0'; g.fillText(l.t, lx, ly); }
       for (const e of ents.values()) { if (e.id === myId) continue; g.fillStyle = e.kind === 'm' ? '#ff4d4d' : e.kind === 'n' ? '#4dd2ff' : '#ffffff'; g.fillRect(x0 + (e.x - RX) * k - 2, y0 + e.y * k - 2, 4, 4); }
+      g.font = '700 13px Poppins, sans-serif'; g.textAlign = 'center';
+      for (const pt of D.portalsOf(REG.id)) {
+        const px = x0 + (pt.x + 0.5) * k, py = y0 + (pt.y + 1) * k, d = D.REGIONS[pt.to];
+        g.fillStyle = '#000'; g.beginPath(); g.ellipse(px, py, 8, 11, 0, 0, 7); g.fill(); g.fillStyle = pt.back ? '#ffb347' : '#c084ff'; g.beginPath(); g.ellipse(px, py, 6, 9, 0, 0, 7); g.fill();
+        const lbl = 'Portal: ' + d.name + (me.lv < d.lvl ? ` (Nv ${d.lvl})` : ''); g.textAlign = pt.back ? 'left' : 'right';
+        g.lineWidth = 4; g.strokeStyle = 'rgba(0,0,0,.85)'; g.strokeText(lbl, px + (pt.back ? 12 : -12), py - 12); g.fillStyle = '#e9d5ff'; g.fillText(lbl, px + (pt.back ? 12 : -12), py - 12);
+      }
+      g.textAlign = 'center';
+      for (const f of friends) if (f[1] && f[2] === REG.id) {
+        const fx = x0 + f[3] * k, fy = y0 + f[4] * k; greenDot(g, fx, fy, 7);
+        g.lineWidth = 4; g.strokeStyle = 'rgba(0,0,0,.85)'; g.strokeText(f[0], fx, fy - 13); g.fillStyle = '#7dffa6'; g.fillText(f[0], fx, fy - 13);
+      }
       if (meE) { const px = x0 + (meE.x - RX) * k, py = y0 + meE.y * k; g.fillStyle = '#fff'; g.strokeStyle = '#000'; g.lineWidth = 2; g.beginPath(); g.arc(px, py, 6, 0, 7); g.fill(); g.stroke(); g.fillStyle = '#ffd84a'; g.beginPath(); g.arc(px, py, 3, 0, 7); g.fill(); }
-      info.innerHTML = `<b style="color:var(--gold)">${REG.name}</b> · Cidade: ${REG.town} · Nível recomendado: ${REG.lvl}+<br>${REG.desc}<br>Para ir a outras terras, fale com o <b>Guardião do Portal</b> na cidade.`;
+      info.innerHTML = `<b style="color:var(--gold)">${REG.name}</b> · Cidade: ${REG.town} · Nível recomendado: ${REG.lvl}+<br>${REG.desc}<br>Para ir a outras terras, siga a estrada até o <b>portal</b> no fim do mapa (leste: próxima terra, oeste: terra anterior) ou pague o <b>Guardião do Portal</b> na cidade.`;
       return;
     }
     // mundo
@@ -598,6 +718,9 @@
       g.strokeText(r.name, cx, cy + rad + 26); g.fillStyle = '#ffe9b0'; g.fillText(r.name, cx, cy + rad + 26);
       g.font = '600 12px Poppins, sans-serif'; const sub = `${r.town} · Nv ${r.lvl}+`;
       g.strokeText(sub, cx, cy + rad + 42); g.fillStyle = '#cfd8e6'; g.fillText(sub, cx, cy + rad + 42);
+      const fr = friends.filter(f => f[1] && f[2] === r.id);
+      fr.forEach((f, i) => { const a = i * 2.39996, rr = rad * 0.25 + 6 * Math.sqrt(i); greenDot(g, cx + Math.cos(a) * rr * 1.5 + 22, cy + Math.sin(a) * rr, 6); });
+      if (fr.length) { g.font = '700 12px Poppins'; g.lineWidth = 4; g.strokeStyle = 'rgba(0,0,0,.85)'; const t = fr.length === 1 ? fr[0][0] : fr.length + ' amigos'; g.strokeText(t, cx + 22, cy + 26); g.fillStyle = '#7dffa6'; g.fillText(t, cx + 22, cy + 26); }
       if (r.id === here) { g.fillStyle = '#ffd84a'; g.beginPath(); g.moveTo(cx, cy - 12); g.lineTo(cx - 9, cy - 28); g.lineTo(cx + 9, cy - 28); g.fill(); g.font = '700 12px Poppins'; g.strokeText('Você está aqui', cx, cy - 34); g.fillStyle = '#fff'; g.fillText('Você está aqui', cx, cy - 34); }
     }
     info.innerHTML = '';
@@ -615,11 +738,49 @@
     }
   }
 
+  // ---------------------------------------------------- AMIGOS
+  function updFriendBadge() {
+    const on = friends.filter(f => f[1]).length, b = $('frCount');
+    b.textContent = on; b.style.display = on ? 'block' : 'none';
+  }
+  function renderFriends(force) {
+    const near = [...ents.values()].filter(e => e.kind === 'p' && e.id !== myId && e.name && !isFriend(e.name)).map(e => e.name).slice(0, 6);
+    const sig = JSON.stringify([friends.map(f => [f[0], f[1], f[2], f[5]]), near]);
+    if (!force && sig === frSig) return; frSig = sig;
+    const nl = $('frNear'); nl.innerHTML = '';
+    if (near.length) {
+      const h = document.createElement('div'); h.className = 'frH'; h.textContent = 'Jogadores perto de você'; nl.appendChild(h);
+      near.forEach(n => { const b = document.createElement('button'); b.className = 'sbtn frNearBtn'; b.textContent = '+ ' + n; b.onclick = () => send({ t: 'friendAdd', name: n }); nl.appendChild(b); });
+    }
+    const L = $('frList'); L.innerHTML = '';
+    if (!friends.length) { L.innerHTML = '<div class="frEmpty">Você ainda não tem amigos.<br>Digite o nome de um jogador online acima e toque em <b>Adicionar</b>. Quando ele aceitar, aparece como <b style="color:#5cf08a">ponto verde</b> no mapa.</div>'; return; }
+    const sorted = friends.slice().sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+    for (const f of sorted) {
+      const row = document.createElement('div'); row.className = 'frRow' + (f[1] ? ' on' : '');
+      const reg = f[1] ? D.REGIONS[f[2]] : null;
+      row.innerHTML = `<i class="frDot"></i><div class="frN"><b>${f[0]}</b><small>${f[1] ? `Online · ${reg ? reg.name : ''} · Nv ${f[5]}` : 'Offline'}</small></div>`;
+      if (f[1]) { const m = document.createElement('button'); m.className = 'sbtn'; m.textContent = 'Ver no mapa'; m.onclick = () => openMap(f[2] === REG.id ? 'region' : 'world'); row.appendChild(m); }
+      const del = document.createElement('button'); del.className = 'sbtn frDel'; del.textContent = 'Remover';
+      del.onclick = () => { if (del.dataset.c) send({ t: 'friendDel', name: f[0] }); else { del.dataset.c = 1; del.textContent = 'Confirmar?'; setTimeout(() => { del.dataset.c = ''; del.textContent = 'Remover'; }, 3000); } };
+      row.appendChild(del); L.appendChild(row);
+    }
+  }
+  $('frAddBtn').onclick = () => { const v = $('frName').value.trim(); if (v) { send({ t: 'friendAdd', name: v }); $('frName').value = ''; } };
+  $('frName').addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') $('frAddBtn').click(); });
+  function showFriendReq() {
+    const r = frReqs[0], box = $('frReq');
+    if (!r) { box.style.display = 'none'; return; }
+    $('frReqTxt').innerHTML = `<b>${r.from}</b> <small>(Nv ${r.lv})</small> quer ser seu amigo`;
+    box.style.display = 'flex';
+  }
+  function answerReq(ok) { const r = frReqs.shift(); if (r) send({ t: 'friendAnswer', name: r.from, ok }); showFriendReq(); }
+  $('frYes').onclick = () => answerReq(true); $('frNo').onclick = () => answerReq(false);
   function openPanel(tab) {
     closeModals(); curTab = tab; $('mPanel').style.display = 'flex';
-    $('panelTitle').textContent = { inv: 'Mochila', stats: 'Personagem', quest: 'Missão' }[tab];
+    $('panelTitle').textContent = { inv: 'Mochila', stats: 'Personagem', quest: 'Missão', friends: 'Amigos' }[tab];
     document.querySelectorAll('.tabs2 [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
-    $('tabInv').style.display = tab === 'inv' ? 'block' : 'none'; $('tabStats').style.display = tab === 'stats' ? 'block' : 'none'; $('tabQuest').style.display = tab === 'quest' ? 'block' : 'none';
+    $('tabInv').style.display = tab === 'inv' ? 'block' : 'none'; $('tabStats').style.display = tab === 'stats' ? 'block' : 'none'; $('tabQuest').style.display = tab === 'quest' ? 'block' : 'none'; $('tabFriends').style.display = tab === 'friends' ? 'block' : 'none';
+    if (tab === 'friends') renderFriends(true);
     renderPanels();
   }
   function itemDesc(id) {
@@ -660,7 +821,8 @@
       };
       invEl.appendChild(d);
     }
-    $('kv').innerHTML = `<div>Vocação<b>${D.VOC[me.voc] ? D.VOC[me.voc].name : ''}</b></div><div>Nível<b>${me.lv}</b></div><div>Experiência<b>${me.xp}</b></div><div>Ataque<b>${me.atk}</b></div><div>Defesa<b>${me.def}</b></div><div>Ouro<b>${me.gold}</b></div>`;
+    const atkPerSec = me.atkDelay ? (1000 / me.atkDelay).toFixed(2).replace('.', ',') + '/s' : '—';
+    $('kv').innerHTML = `<div>Vocação<b>${D.VOC[me.voc] ? D.VOC[me.voc].name : ''}</b></div><div>Nível<b>${me.lv}</b></div><div>Experiência<b>${me.xp}</b></div><div>Ataque<b>${me.atk}</b></div><div>Vel. de ataque<b>${atkPerSec}</b></div><div>Defesa<b>${me.def}</b></div><div>Ouro<b>${me.gold}</b></div>`;
     $('ptsTxt').textContent = me.pts ? `Você tem ${me.pts} ponto(s) para distribuir!` : 'Ganhe pontos subindo de nível.';
     const stEl = $('stats'); stEl.innerHTML = '';
     for (const k in D.STATS) {
@@ -711,7 +873,7 @@
   //  • o canto inferior esquerdo inteiro serve para andar (não precisa acertar o círculo);
   //  • o visual do joystick continua o mesmo.
   const joy = $('joy'), knob = $('knob'); let joyId = null, joyDir = -1, joyAX = 0, joyAY = 0;
-  function setWalk(d) { if (d !== joyDir) { joyDir = d; send({ t: 'walk', d }); } }
+  function setWalk(d) { if (loadingOn) d = -1; if (d !== joyDir) { joyDir = d; send({ t: 'walk', d }); } }
   setInterval(() => { if (joyDir >= 0 && inGame) send({ t: 'walk', d: joyDir }); }, 250);
   function joyRect() { const r = joy.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2, r: r.width / 2 }; }
   function inZone(x, y) {
@@ -765,7 +927,10 @@
     if (!inGame || document.activeElement === $('chatIn')) return;
     if (e.key === 'Enter') { closeModals(); $('mChat').style.display = 'flex'; setTimeout(() => $('chatIn').focus(), 10); e.preventDefault(); return; }
     if (e.key in KD) { e.preventDefault(); if (e.repeat) return; const d = KD[e.key]; if (!held.includes(d)) held.push(d); updWalk(); return; }
-    if (e.key >= '1' && e.key <= '4') setSel(+e.key - 1);
+    const spellKey = /^F([1-4])$/.exec(e.key);
+    if (spellKey || (e.key >= '1' && e.key <= '4')) {
+      e.preventDefault(); setSel(spellKey ? +spellKey[1] - 1 : +e.key - 1); cast(); return;
+    }
     if (e.key === ' ') { e.preventDefault(); cast(); }
     if (e.key === 't' || e.key === 'T') send({ t: 'nearest' });
     if (e.key === 'q' || e.key === 'Q') send({ t: 'quick', k: 'hp' });

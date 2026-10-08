@@ -104,6 +104,8 @@ function genRegion(r) {
     for (let x = CX; x <= CX + 32; x++) road2v(x, CY + 40);
     for (let y = CY - 42; y < CY; y++) road2(CX + 40, y);
   }
+  // clareira em volta de cada portal, para ele ficar sempre acessível
+  for (const pt of D.portalsOf(r)) for (let dy = -2; dy <= 3; dy++) for (let dx = -2; dx <= 2; dx++) road(pt.x + dx, pt.y + dy);
   for (let y = CY - 13; y <= CY + 13; y++) for (let x = CX - 13; x <= CX + 13; x++) if (BLOCK[lget(x, y)] || lget(x, y) === T.WATER) lset(x, y, base);
   for (let y = CY - 10; y <= CY + 10; y++) for (let x = CX - 10; x <= CX + 10; x++) {
     const edge = Math.abs(x - CX) === 10 || Math.abs(y - CY) === 10;
@@ -178,10 +180,13 @@ function zoneOf(x, y) {
   if (isTown(x, y)) return null;
   const r = regionOf(x), reg = REGIONS[r], lx = x - r * W;
   const d = Math.max(Math.abs(lx - CX), Math.abs(y - CY));
-  if (d < 16) return null;
+  // Dois tiles separam a muralha da faixa de aprendizado: há monstros logo
+  // ao sair da cidade, sem comprometer a área segura ou os comerciantes.
+  if (d < 12) return null;
   if (reg.biome === 'green') {
     if (inCave(x, y)) return 'cave';
     if (inDesert(x, y)) return 'desert';
+    if (r === 0 && d < 32) return 'starter';
     if (d < 38) return 'meadow'; if (d < 58) return 'forest'; return 'wild';
   }
   return d < 45 ? reg.zones[0] : reg.zones[1];
@@ -193,7 +198,9 @@ for (let rg = 0; rg < NR; rg++) {
     const x = rg * W + lx;
     const z = zoneOf(x, y); if (!z || !walkable(x, y, true)) continue;
     const t = get(x, y); if (t === T.PATH || t === T.BRIDGE) continue;
-    if (RND() > 1 / 55) continue;
+    // O anel inicial é um pouco mais povoado para que novos personagens
+    // encontrem vários tipos de monstro sem atravessar metade do mapa.
+    if (RND() > (z === 'starter' ? 1 / 34 : 1 / 55)) continue;
     const list = ZONES[z]; const tot = list.reduce((s, a) => s + a[1], 0); let r = RND() * tot, type = list[0][0];
     for (const [m, w] of list) { r -= w; if (r <= 0) { type = m; break; } }
     spawns.push({ type, x, y, ent: null, at: 0 });
@@ -209,7 +216,7 @@ spawns.forEach(spawnMon);
 console.log(`${NR} regiões ${W}x${H} geradas, ${spawns.length} monstros.`);
 
 // ------------------------------------------------------------------ PERSISTÊNCIA
-const SAVE_KEYS = ['name', 'voc', 'x', 'y', 'level', 'maxLevel', 'xp', 'hp', 'mp', 'stats', 'points', 'gold', 'inv', 'eq', 'taskIdx', 'task', 'kills', 'deaths', 'salt', 'hash', 'app'];
+const SAVE_KEYS = ['name', 'voc', 'x', 'y', 'level', 'maxLevel', 'xp', 'hp', 'mp', 'stats', 'points', 'gold', 'inv', 'eq', 'taskIdx', 'task', 'kills', 'deaths', 'salt', 'hash', 'app', 'friends'];
 // SQLite local. O arquivo JSON anterior é importado uma única vez e mantido
 // como cópia de segurança até uma remoção manual pelo administrador.
 fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -241,7 +248,10 @@ const upsertPlayer = db.prepare(`
 `);
 function persist(p) {
   const o = {}; for (const k of SAVE_KEYS) o[k] = p[k];
-  upsertPlayer.run({ username: p.name.toLowerCase(), name: o.name, voc: o.voc, salt: o.salt, hash: o.hash, data: JSON.stringify(o) });
+  saveData(o);
+}
+function saveData(o) {
+  upsertPlayer.run({ username: o.name.toLowerCase(), name: o.name, voc: o.voc, salt: o.salt, hash: o.hash, data: JSON.stringify(o) });
 }
 function loadPlayer(username) {
   const row = getPlayer.get(username);
@@ -271,6 +281,14 @@ function playerAtk(p) {
 }
 const playerDef = p => eqSum(p, 'def') + p.stats.dfs + p.level * (p.voc === 'warrior' ? 0.4 : 0.2);
 const stepTime = p => Math.max(150, 260 - p.level * 2);
+// Ritmo inspirado na progressão de ASPD: todo nível encurta um pouco o
+// intervalo do ataque básico, mas os ganhos vão ficando menores. O teto de
+// 32% mantém o combate legível mesmo em níveis altos.
+function attackDelay(p) {
+  const base = VOC[p.voc].atkSpeed;
+  const haste = 0.32 * (1 - Math.exp(-(Math.max(1, p.level) - 1) / 26));
+  return Math.round(base * (1 - haste));
+}
 
 const HAIR_STYLES = ['curto', 'longo', 'rabo'], HAIR_COLORS = ['preto', 'castanho', 'loiro', 'ruivo', 'branco', 'azul', 'rosa'];
 function cleanApp(a) { a = a || {}; return { skin: [0, 1, 2].includes(a.skin) ? a.skin : 0, hs: HAIR_STYLES.includes(a.hs) ? a.hs : 'curto', hc: HAIR_COLORS.includes(a.hc) ? a.hc : 'castanho' }; }
@@ -311,7 +329,8 @@ function gainXp(p, amount) {
   if (up) {
     p.hp = maxHp(p); p.mp = maxMp(p); p.dirty = true;
     addFx(p.x, p.y, { k: 'level' });
-    msg(p, `Você avançou para o nível ${p.level}!` + (p.points ? ` Você tem ${p.points} ponto(s) de atributo para distribuir.` : ''), '#ffd84a');
+    const aps = (1000 / attackDelay(p)).toFixed(2).replace('.', ',');
+    msg(p, `Você avançou para o nível ${p.level}! Ataque básico: ${aps}/s.` + (p.points ? ` Você tem ${p.points} ponto(s) de atributo para distribuir.` : ''), '#ffd84a');
     for (const sp of SPELLS[p.voc]) if (sp.lvl === p.level) msg(p, `Nova magia aprendida: ${sp.name}!`, '#9cf');
   }
 }
@@ -433,10 +452,10 @@ function monTick(m, now) {
   if (now < m.nextAct) return;
   const def = MON[m.type];
   let tgt = m.target ? players.get(m.target) : null;
-  if (tgt && (isTown(tgt.x, tgt.y) || cheb(m, tgt) > 10)) tgt = null;
+  if (tgt && (isTown(tgt.x, tgt.y) || cheb(m, tgt) > 10 || tgt.safeUntil > now)) tgt = null;
   if (!tgt && !def.passive) {
     let best = 7;
-    for (const p of players.values()) { const d = cheb(m, p); if (d < best && !isTown(p.x, p.y)) { best = d; tgt = p; } }
+    for (const p of players.values()) { const d = cheb(m, p); if (d < best && !isTown(p.x, p.y) && !(p.safeUntil > now)) { best = d; tgt = p; } }
   }
   m.target = tgt ? tgt.id : null;
   if (tgt && !def.passive) {
@@ -483,7 +502,12 @@ function playerTick(p, now) {
   if (now >= p.nextMove) {
     if (p.walkDir >= 0) {
       p.path = null;
-      if (tryMove(p, p.walkDir)) p.nextMove = now + stepTime(p);
+      const nx = p.x + DX[p.walkDir], ny = p.y + DY[p.walkDir], pt = portalAt(nx, ny);
+      if (pt && p.level < REGIONS[pt.to].lvl) {        // portal trancado pelo nível
+        p.dir = p.walkDir; p.nextMove = now + 400;
+        if (now - (p.portalMsg || 0) > 3000) { p.portalMsg = now; msg(p, `Este portal leva a ${REGIONS[pt.to].name}. Você precisa do nível ${REGIONS[pt.to].lvl}.`, '#f88'); }
+      }
+      else if (tryMove(p, p.walkDir)) { p.nextMove = now + stepTime(p); if (pt) { portalTravel(p, pt); return; } }
       else { p.dir = p.walkDir; const e = occ.get((p.y + DY[p.walkDir]) * TW + p.x + DX[p.walkDir]); if (e && e.kind === 'm' && !isTown(p.x, p.y)) { p.target = e.id; p.autoTarget = true; t = e; } }
     }
     // o personagem NUNCA anda sozinho: sem perseguição automática nem caminho automático
@@ -493,7 +517,7 @@ function playerTick(p, now) {
     if (p.voc === 'wizard') addFx(p.x, p.y, { k: 'proj', tx: t.x, ty: t.y, fx: 'arcane' });
     else addFx(t.x, t.y, { k: 'slash' });
     attack(p, t, 1);
-    p.nextAtk = now + VOC[p.voc].atkSpeed;
+    p.nextAtk = now + attackDelay(p);
   }
 }
 
@@ -589,6 +613,25 @@ function sendRegion(p, first) {
   p.region = r; p.known = new Map();   // cliente limpa as entidades ao trocar de região
   send(p, { t: first ? 'welcome' : 'region', id: p.id, r, ox: r * W, W, H, tiles: regionTiles[r], xpRate: XP_RATE });
 }
+// ------------------------------------------------------------------ PORTAIS
+// Pisou no portal do fim da estrada: viaja para a terra vizinha (de graça, mas precisa do nível).
+const portalAt = (x, y) => { const r = regionOf(x), lx = x - r * W; return D.portalsOf(r).find(pt => pt.x === lx && (y === pt.y || y === pt.y + 1)) || null; };
+function portalTravel(p, pt) {
+  const from = regionOf(p.x), to = pt.to, reg = REGIONS[to];
+  // chega ao lado do portal que leva de volta, na terra de destino
+  const back = D.portalsOf(to).find(q => q.to === from);
+  const ax = to * W + (back ? (back.back ? back.x + 3 : back.x - 3) : CX), ay = back ? back.y : CY + 4;
+  moveToRegion(p, to, ax, ay);
+  msg(p, `Você atravessou o portal e chegou em ${reg.name}.`, '#d8a8ff');
+}
+function moveToRegion(p, to, x, y) {
+  send(p, { t: 'loading', to });                       // celular mostra a tela de carregamento
+  p.target = null; p.goto = null; p.walkDir = -1; p.pendingNpc = null; p.dirty = true; p.autoTarget = false;
+  p.safeUntil = Date.now() + 4000;                     // 4 s sem ser atacado enquanto carrega
+  const pos = findFree(x, y); place(p, pos.x, pos.y);
+  sendRegion(p, false);
+  addFx(p.x, p.y, { k: 'level' });
+}
 function travel(p, to) {
   const reg = REGIONS[to], from = regionOf(p.x);
   if (!reg || to === from) return;
@@ -596,10 +639,8 @@ function travel(p, to) {
   if (p.level < reg.lvl) return msg(p, `Você precisa do nível ${reg.lvl} para ir a ${reg.name}.`, '#f88');
   const cost = to === 0 ? 50 : reg.cost;
   if (p.gold < cost) return msg(p, `A viagem custa ${cost} ouro.`, '#f88');
-  p.gold -= cost; p.target = null; p.goto = null; p.walkDir = -1; p.pendingNpc = null; p.dirty = true;
-  const sp = spawnOf(to), pos = findFree(sp.x, sp.y); place(p, pos.x, pos.y);
-  sendRegion(p, false);
-  addFx(p.x, p.y, { k: 'level' });
+  p.gold -= cost;
+  const sp = spawnOf(to); moveToRegion(p, to, sp.x, sp.y);
   msg(p, `Você chegou em ${reg.town} — ${reg.name}.`, '#ffd84a');
 }
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'application/javascript; charset=utf-8', '.css': 'text/css', '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json', '.jpg': 'image/jpeg', '.webmanifest': 'application/manifest+json', '.ttf': 'font/ttf', '.svg': 'image/svg+xml' };
@@ -654,6 +695,7 @@ wss.on('connection', ws => {
       for (const o of players.values()) if (o.name.toLowerCase() === key) { send(o, { t: 'err', m: 'Conectado em outro lugar.' }); o.ws.close(); leave(o); }
       p = Object.assign({}, data, { id: nextId++, kind: 'p', ws, dir: 0, walkDir: -1, nextMove: 0, nextAtk: 0, lastRegen: Date.now(), cds: {}, fx: [], dirty: true, target: null, skull: 0, berserk: 0 });
       p.stats = Object.assign({ str: 0, mag: 0, dfs: 0, vit: 0 }, p.stats); p.app = cleanApp(p.app);
+      p.friends = Array.isArray(p.friends) ? p.friends.filter(n => typeof n === 'string').slice(0, FRIEND_MAX) : []; p.reqs = new Set(); p.frSent = 0; p.frDirty = true;
       const pos = p.x >= 0 && p.x < TW && walkable(p.x, p.y) ? findFree(p.x, p.y) : findFree(SPAWN.x, SPAWN.y);
       place(p, pos.x, pos.y); ents.set(p.id, p); players.set(p.id, p); persist(p);
       sendRegion(p, true);
@@ -701,6 +743,9 @@ wss.on('connection', ws => {
         p.gold += v; msg(p, `Você vendeu ${q}x ${ITEMS[s.id].name} por ${v} ouro.`, '#cfc'); removeAt(p, m.slot | 0, q);
         break;
       }
+      case 'friendAdd': friendAdd(p, m.name); break;
+      case 'friendAnswer': friendAnswer(p, m.name, !!m.ok); break;
+      case 'friendDel': friendDel(p, m.name); break;
       case 'chat': {
         const text = String(m.m || '').slice(0, 140).trim(); if (!text) break;
         if (text === '/online') { msg(p, 'Online: ' + [...players.values()].map(o => `${o.name} (${o.level})`).join(', '), '#9cf'); break; }
@@ -721,6 +766,62 @@ function leave(p) {
   broadcast({ t: 'msg', m: `${p.name} saiu do jogo.`, c: '#888' });
 }
 
+// ------------------------------------------------------------------ AMIGOS
+// Amizade é dos dois lados: um pede, o outro aceita. Só amigos veem a posição um do outro no mapa.
+const FRIEND_MAX = 50;
+const onlineByName = n => { const k = String(n || '').toLowerCase(); for (const o of players.values()) if (o.name.toLowerCase() === k) return o; return null; };
+const hasFriend = (p, n) => p.friends.some(f => f.toLowerCase() === String(n).toLowerCase());
+// altera a lista de um jogador esteja ele online ou não (offline: direto no banco)
+function editFriends(name, fn) {
+  const o = onlineByName(name);
+  if (o) { fn(o.friends); o.frDirty = true; persist(o); return true; }
+  const d = loadPlayer(String(name).toLowerCase()); if (!d) return false;
+  d.friends = Array.isArray(d.friends) ? d.friends : []; fn(d.friends); saveData(d); return true;
+}
+function friendAdd(p, raw) {
+  const name = String(raw || '').trim().replace(/\s+/g, ' ').slice(0, 16);
+  if (!name) return;
+  if (name.toLowerCase() === p.name.toLowerCase()) return msg(p, 'Você não pode adicionar a si mesmo.', '#f88');
+  if (hasFriend(p, name)) return msg(p, `${name} já é seu amigo.`, '#f2c14e');
+  if (p.friends.length >= FRIEND_MAX) return msg(p, `Limite de ${FRIEND_MAX} amigos.`, '#f88');
+  const now = Date.now(); if (now - p.frSent < 1500) return; p.frSent = now;   // evita spam de pedidos
+  const o = onlineByName(name);
+  if (!o) return msg(p, loadPlayer(name.toLowerCase()) ? `${name} não está online. O pedido só chega para quem está jogando.` : `Jogador "${name}" não encontrado.`, '#f88');
+  if (p.reqs.has(o.name)) return friendAnswer(p, o.name, true);   // os dois pediram: vira amizade na hora
+  if (o.friends.length >= FRIEND_MAX) return msg(p, `${o.name} já tem amigos demais.`, '#f88');
+  o.reqs.add(p.name); send(o, { t: 'freq', from: p.name, lv: p.level });
+  msg(p, `Pedido de amizade enviado para ${o.name}.`, '#8c8');
+}
+function friendAnswer(p, raw, ok) {
+  const name = [...p.reqs].find(n => n.toLowerCase() === String(raw || '').toLowerCase()); if (!name) return;
+  p.reqs.delete(name);
+  const o = onlineByName(name);
+  if (!ok) { if (o) msg(o, `${p.name} recusou seu pedido de amizade.`, '#aaa'); return; }
+  if (p.friends.length >= FRIEND_MAX) return msg(p, `Limite de ${FRIEND_MAX} amigos.`, '#f88');
+  if (!hasFriend(p, name)) p.friends.push(name);
+  editFriends(name, list => { if (!list.some(f => f.toLowerCase() === p.name.toLowerCase())) list.push(p.name); });
+  p.frDirty = true; persist(p);
+  msg(p, `Você e ${name} agora são amigos! Ele aparece como ponto verde no mapa.`, '#5f5');
+  if (o) msg(o, `${p.name} aceitou seu pedido. Vocês agora são amigos!`, '#5f5');
+}
+function friendDel(p, raw) {
+  const name = p.friends.find(f => f.toLowerCase() === String(raw || '').toLowerCase()); if (!name) return;
+  p.friends = p.friends.filter(f => f !== name); p.frDirty = true; persist(p);
+  editFriends(name, list => { const i = list.findIndex(f => f.toLowerCase() === p.name.toLowerCase()); if (i >= 0) list.splice(i, 1); });
+  msg(p, `${name} foi removido dos amigos.`, '#aaa');
+}
+// a cada segundo, cada jogador recebe onde estão seus amigos online
+let lastFriendSync = 0;
+function friendSync(now) {
+  if (now - lastFriendSync < 1000) return; lastFriendSync = now;
+  const by = new Map(); for (const o of players.values()) by.set(o.name.toLowerCase(), o);
+  for (const p of players.values()) {
+    if (!p.friends.length && !p.frDirty) continue;
+    const l = p.friends.map(n => { const o = by.get(n.toLowerCase()); return o ? [n, 1, regionOf(o.x), o.x - regionOf(o.x) * W, o.y, o.level] : [n, 0]; });
+    send(p, { t: 'fr', l }); p.frDirty = false;
+  }
+}
+
 // ------------------------------------------------------------------ LOOP
 // Só processa o que está perto de algum jogador. Sem jogadores, o servidor quase não gasta CPU.
 let lastSpawnCheck = 0;
@@ -732,6 +833,7 @@ function tick() {
   for (const p of players.values()) near(p.x, p.y, 18, 18, e => { if (e.kind === 'm') awake.add(e); });
   for (const e of awake) if (!e.dead) monTick(e, now);
   for (const p of players.values()) playerTick(p, now);
+  friendSync(now);
   // enviar estado (só entidades na tela de cada jogador)
   for (const p of players.values()) {
     // Nome e aparência só vão quando a criatura aparece ou muda (economiza internet do celular)
@@ -748,7 +850,7 @@ function tick() {
     });
     for (const id of known.keys()) if (!seen.has(id)) known.delete(id);
     const cds = {}; for (const k in p.cds) if (p.cds[k] > now) cds[k] = p.cds[k] - now;
-    const me = { x: p.x, y: p.y, hp: p.hp, mhp: maxHp(p), mp: p.mp, mmp: maxMp(p), lv: p.level, xp: p.xp, xpa: xpFor(p.level), xpb: xpFor(p.level + 1), gold: p.gold, tg: p.target, cds, voc: p.voc, town: isTown(p.x, p.y), r: regionOf(p.x), berserk: Math.max(0, p.berserk - now) };
+    const me = { x: p.x, y: p.y, hp: p.hp, mhp: maxHp(p), mp: p.mp, mmp: maxMp(p), lv: p.level, xp: p.xp, xpa: xpFor(p.level), xpb: xpFor(p.level + 1), gold: p.gold, tg: p.target, cds, voc: p.voc, town: isTown(p.x, p.y), r: regionOf(p.x), berserk: Math.max(0, p.berserk - now), atkDelay: attackDelay(p) };
     if (p.dirty) { Object.assign(me, { inv: p.inv, eq: p.eq, st: p.stats, pts: p.points, atk: Math.round(playerAtk(p)), def: Math.round(playerDef(p)), task: p.task, name: p.name }); p.dirty = false; }
     send(p, { t: 's', me, e: list, fx: p.fx });
     p.fx = [];
@@ -780,4 +882,5 @@ setInterval(() => { for (const p of players.values()) persist(p); saveDb(); }, 3
 function shutdown() { for (const p of players.values()) persist(p); saveDb(); process.exit(0); }
 process.on('SIGINT', shutdown); process.on('SIGTERM', shutdown);
 
+server.on('error', e => { console.error('Não foi possível abrir a porta ' + PORT + ':', e.message); process.exit(1); });
 server.listen(PORT, '0.0.0.0', () => console.log(`As Aventuras do Piper rodando em http://localhost:${PORT} (pronto em ${Date.now() - BOOT} ms)`));

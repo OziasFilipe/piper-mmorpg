@@ -3,7 +3,7 @@
 const ENEMIES = (() => {
   const names = ['rabbit', 'rat', 'snake', 'wolf', 'goblin', 'bear', 'orc', 'shaman', 'troll', 'scorpion', 'mummy', 'skeleton', 'spider', 'dragon'];
   const images = {};
-  const ASSET_REV = 'motion-pixel-4';
+  const ASSET_REV = 'motion-pixel-5';
   function load(onProgress) {
     let done = 0;
     return Promise.all(names.map(name => new Promise(resolve => {
@@ -14,15 +14,17 @@ const ENEMIES = (() => {
     }))).then(() => undefined);
   }
   const cache = new Map();
-  function sprite(name, frame = 0) {
+  function sprite(name, frame = 0, faceLeft = false) {
     const sheet = images[name]; if (!sheet) return null;
     const frames = Math.max(1, Math.floor(sheet.width / sheet.height));
     const step = Math.max(0, Math.min(frames - 1, frame | 0));
-    const key = `${name}:${step}`;
+    const key = `${name}:${step}:${faceLeft ? 'l' : 'r'}`;
     if (cache.has(key)) return cache.get(key);
     const F = sheet.height;   // tamanho do quadro = altura da folha (folhas reduzidas para carregar rápido)
     const c = document.createElement('canvas'); c.width = F; c.height = F;
-    c.getContext('2d').drawImage(sheet, step * F, 0, F, F, 0, 0, F, F);
+    const g = c.getContext('2d');
+    if (faceLeft) { g.translate(F, 0); g.scale(-1, 1); }
+    g.drawImage(sheet, step * F, 0, F, F, 0, 0, F, F);
     cache.set(key, c); return c;
   }
   return { load, sprite };

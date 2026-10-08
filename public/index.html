@@ -146,6 +146,7 @@ label.lb{display:block;font-size:12px;color:var(--dim);margin:8px 0 3px;text-tra
 .ab .cd{position:absolute;left:0;right:0;bottom:0;background:rgba(0,0,0,.72)}
 .ab .lk{position:absolute;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;font-size:11px;font-weight:700}
 .ab.lock .lk{display:flex}
+.ab kbd{position:absolute;top:2px;left:3px;z-index:3;min-width:14px;padding:1px 3px;border-radius:3px;background:rgba(8,6,16,.78);border:1px solid rgba(255,233,176,.65);color:#fff0bd;font:700 9px/12px Poppins,sans-serif;text-align:center;text-shadow:0 1px 1px #000;pointer-events:none}
 .ab.sel{border-color:#fff;box-shadow:0 0 0 3px var(--gold),0 0 18px rgba(242,193,78,.7)}
 #cast{right:0;bottom:0;width:92px;height:92px;border-width:3px;border-color:var(--gold);box-shadow:0 3px 0 #17130e,0 0 16px rgba(242,193,78,.28)}
 #cast .lbl{position:absolute;bottom:6px;left:0;right:0;text-align:center;font-size:10px;font-weight:700;text-shadow:0 1px 2px #000;letter-spacing:1px}
@@ -270,11 +271,17 @@ label.lb{display:block;font-size:12px;color:var(--dim);margin:8px 0 3px;text-tra
   #hudTR::before{right:39px}
   .ib{width:34px;height:34px}.ib svg{width:18px;height:18px}
 }
-/* Computador usa teclado e clique; joystick e atalhos de toque ficam só em tela tátil. */
-/* Joystick e botões de toque aparecem em QUALQUER aparelho com tela de toque (classe "touch" no <html>).
-   Só somem num computador sem tela de toque, que usa teclado e mouse. */
-html:not(.touch) #joy,html:not(.touch) #acts{display:none!important}
-html:not(.touch) #feed{bottom:20px}
+/* No computador, o joystick some, mas as habilidades continuam em uma hotbar
+   pequena no centro. Assim elas podem ser clicadas ou usadas pelos atalhos. */
+html:not(.touch) #joy{display:none!important}
+html:not(.touch) #acts{display:flex!important;align-items:center;justify-content:center;gap:7px;left:50%;right:auto;bottom:14px;width:auto;height:74px;padding:5px 7px;transform:translateX(-50%);border:1.5px solid rgba(201,147,47,.7);border-radius:10px;background:linear-gradient(rgba(38,30,54,.92),rgba(12,9,22,.94));box-shadow:0 4px 15px rgba(0,0,0,.55);pointer-events:auto}
+html:not(.touch) #acts .ab{position:relative!important;right:auto!important;bottom:auto!important;flex:none;width:56px;height:56px}
+html:not(.touch) #acts #cast{order:5;width:66px;height:66px}
+html:not(.touch) #acts .pot{width:42px;height:42px}
+html:not(.touch) #acts #potHp{order:6}html:not(.touch) #acts #potMp{order:7}
+html:not(.touch) #cast .lbl{bottom:4px;font-size:8px;letter-spacing:.5px}
+html:not(.touch) #feed{bottom:98px}
+html.touch #acts kbd{display:none}
 
 /* ---- Botão INSTALAR JOGO (PWA) ---- */
 #installBtn{position:absolute;top:calc(10px + env(safe-area-inset-top));right:calc(12px + env(safe-area-inset-right));z-index:60;display:none;align-items:center;gap:8px;padding:8px 16px 8px 12px;font-size:14px;animation:instPulse 2.2s ease-in-out infinite}
@@ -285,6 +292,56 @@ html:not(.touch) #feed{bottom:20px}
 #installHelp h3{margin:0 0 8px;font-family:Lora,serif;color:#ffd86a;font-size:19px}
 #installHelp ol{text-align:left;margin:8px 0 12px;padding-left:22px}
 #installHelp b{color:#ffd86a}
+
+/* ---- Amigos ---- */
+.ib .cnt{position:absolute;right:-5px;top:-5px;min-width:17px;height:17px;padding:0 4px;border-radius:9px;background:#22c55e;color:#04210f;font:800 10.5px/14px Poppins,sans-serif;font-style:normal;text-align:center;border:1.5px solid #0e0c20;box-shadow:0 0 6px #22c55e;display:none}
+.frAdd{display:flex;gap:8px;align-items:center;margin-bottom:8px}
+.frAdd .field{flex:1;margin:0}
+.frAdd .gold-btn{padding:8px 16px;font-size:14px}
+#frNear{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:8px}
+.frH{width:100%;font-size:12px;color:#c9b88f;letter-spacing:.3px}
+.frNearBtn{font-size:12.5px}
+.frRow{display:flex;align-items:center;gap:10px;padding:8px 10px;margin-bottom:6px;border-radius:10px;background:rgba(8,6,16,.45);border:1px solid rgba(201,147,47,.25)}
+.frRow.on{border-color:rgba(53,224,107,.45);background:linear-gradient(90deg,rgba(53,224,107,.12),rgba(8,6,16,.45) 60%)}
+.frDot{width:12px;height:12px;border-radius:50%;flex:none;background:#6b6b78;border:2px solid #1b1726}
+.frRow.on .frDot{background:#35e06b;box-shadow:0 0 8px #35e06b}
+.frN{flex:1;min-width:0}.frN b{display:block;color:#f3e6c4}.frN small{color:#a99f8a;font-size:12px}
+.frRow.on .frN small{color:#86efac}
+.frDel{background:linear-gradient(#b73a3a,#6a1515)!important;color:#ffe3e3!important;border-color:#f19a9a!important}
+.frEmpty{color:#c9bfa8;font-size:13.5px;line-height:1.5;padding:10px 4px;text-align:center}
+#frReq{position:fixed;left:50%;top:calc(10px + env(safe-area-inset-top));transform:translateX(-50%);z-index:70;display:none;align-items:center;gap:10px;padding:10px 12px 10px 16px;border-radius:12px;background:linear-gradient(#1b1f45,#0e1130);border:2px solid #35e06b;box-shadow:0 6px 24px #000a,0 0 14px rgba(53,224,107,.35);color:#f3e6c4;font-size:14px;max-width:94vw}
+#frReq b{color:#7dffa6}#frReq .gold-btn{padding:6px 14px;font-size:13px}
+
+/* ---- Tela de carregamento entre terras ---- */
+#loading{position:fixed;inset:0;z-index:80;display:none;align-items:center;justify-content:center;opacity:0;transition:opacity .35s ease;pointer-events:auto}
+#loading.on{opacity:1}
+#loading .lbg{position:absolute;inset:0;background:radial-gradient(ellipse at center,rgba(20,10,40,.55),rgba(5,3,12,.96) 75%),url(assets/ui/menu_bg.jpg) center/cover;filter:saturate(1.1)}
+#loading .lc{position:relative;text-align:center;width:min(560px,86vw)}
+#loading .lsub{font:600 min(3vh,14px)/1 Poppins,sans-serif;letter-spacing:5px;text-transform:uppercase;color:#d9c9ff}
+#loading .lname{font:700 min(9vh,48px)/1.15 Lora,serif;color:#ffe9b0;text-shadow:0 3px 14px #000,0 0 26px rgba(179,107,255,.55);margin:8px 0 4px}
+#loading .ltown{font:500 min(3.2vh,15px)/1.3 Poppins,sans-serif;color:#cfd8e6;margin-bottom:min(5vh,26px)}
+#loading .lbar{height:10px;border-radius:6px;background:rgba(0,0,0,.55);border:1.5px solid #c9932f;overflow:hidden;box-shadow:0 0 12px rgba(0,0,0,.6)}
+#loading .lbar i{display:block;height:100%;width:0;background:linear-gradient(90deg,#b36bff,#4fd1ff,#ffe08a);transition:width .5s ease}
+#loading .ltip{margin-top:14px;font:400 min(3vh,13.5px)/1.45 Poppins,sans-serif;color:#e9e1cf;opacity:.85}
+
+/* ---- Botão de som ---- */
+.sndBtn .mut{display:none}.sndBtn.off .mut{display:inline}.sndBtn.off .wav{display:none}.sndBtn.off{opacity:.75}
+#titleSnd{position:absolute;top:calc(10px + env(safe-area-inset-top));left:calc(12px + env(safe-area-inset-left));z-index:60;width:44px;height:44px}
+
+/* ---- Convite de instalação (abre sozinho no celular pelo navegador) ---- */
+#installGate{position:fixed;inset:0;z-index:94;display:none;align-items:center;justify-content:center;padding:12px;background:rgba(4,3,12,.72);opacity:0;transition:opacity .3s ease}
+#installGate.on{opacity:1}
+#installGate .gbox{width:min(460px,94vw);max-height:94vh;overflow:auto;text-align:center;padding:16px 20px 14px;border-radius:16px;background:linear-gradient(#1d2150,#0e1130);border:2px solid #c9932f;box-shadow:0 10px 40px #000c,0 0 30px rgba(242,193,78,.18);color:#f3e6c4;transform:scale(.94);transition:transform .3s ease}
+#installGate.on .gbox{transform:scale(1)}
+#installGate .gicon{width:min(64px,14vh);height:min(64px,14vh);border-radius:16px;box-shadow:0 4px 14px #000a;border:2px solid #ffe08a}
+#installGate h3{margin:6px 0 4px;font:700 min(4.6vh,21px)/1.2 Lora,serif;color:#ffd86a}
+#installGate p{margin:0 0 10px;font-size:min(3.4vh,14px);line-height:1.45;color:#e2d8c2}
+#installGate b{color:#ffd86a}
+#gateSteps{display:none;text-align:left;font-size:min(3.3vh,13.5px);line-height:1.45;margin:-2px 0 10px;padding:8px 10px;border-radius:10px;background:rgba(0,0,0,.3);border:1px solid rgba(201,147,47,.35)}
+#gateSteps ol{margin:0;padding-left:20px}
+#gateInstall{display:inline-flex;align-items:center;gap:8px;font-size:16px;padding:10px 22px;animation:instPulse 2.2s ease-in-out infinite}
+#gateInstall svg{width:20px;height:20px;fill:none;stroke:#23190e;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
+#gateLater{display:block;margin:10px auto 0;background:none;border:0;color:#bfb7a5;font:500 13px Poppins,sans-serif;text-decoration:underline;cursor:pointer}
 </style>
 </head>
 <body>
@@ -301,6 +358,7 @@ html:not(.touch) #feed{bottom:20px}
   <div class="bg"></div>
   <img class="logo" src="assets/ui/logo.png" alt="As Aventuras do Piper">
   <div id="tap">TOQUE PARA COMEÇAR</div>
+  <button class="ib sndBtn" id="titleSnd" title="Som"><svg viewBox="0 0 24 24"><path class="spk" d="M4 9h4l5-4v14l-5-4H4z"/><path class="wav" d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/><path class="mut" d="M16 9l6 6M22 9l-6 6"/></svg></button>
   <button id="installBtn" class="gold-btn"><svg viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 19h14"/></svg>INSTALAR JOGO</button>
   <div id="loadbar"><i></i></div>
   <div id="ver">v0.2 · Epiper Tecnologia</div>
@@ -360,17 +418,19 @@ html:not(.touch) #feed{bottom:20px}
       <button class="ib" data-open="inv" title="Mochila"><svg viewBox="0 0 24 24"><path d="M6 8h12l1 12H5z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/></svg></button>
       <button class="ib" data-open="stats" title="Personagem"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c1-4 4-6 8-6s7 2 8 6"/></svg><i class="dot" id="ptsDot"></i></button>
       <button class="ib" data-open="quest" title="Missão"><svg viewBox="0 0 24 24"><path d="M7 3h10v18l-5-3-5 3z"/></svg></button>
+      <button class="ib" data-open="friends" title="Amigos"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.4"/><path d="M2.5 20c.8-3.6 3.3-5.5 6.5-5.5s5.7 1.9 6.5 5.5"/><circle cx="17" cy="9" r="2.6"/><path d="M16 14.6c2.9.1 4.8 1.9 5.5 4.9"/></svg><i class="cnt" id="frCount">0</i></button>
+      <button class="ib sndBtn" title="Som"><svg viewBox="0 0 24 24"><path class="spk" d="M4 9h4l5-4v14l-5-4H4z"/><path class="wav" d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/><path class="mut" d="M16 9l6 6M22 9l-6 6"/></svg></button>
       <button class="ib" data-open="chat" title="Chat"><svg viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/></svg></button>
     </div>
   </div>
   <div class="hud" id="feed"></div>
   <div class="hud" id="joy"><div id="knob"></div></div>
   <div class="hud" id="acts">
-    <div class="ab" id="cast"><canvas width="64" height="64"></canvas><div class="cd"></div><div class="lbl">LANÇAR</div></div>
-    <div class="ab sp" data-i="0" style="right:104px;bottom:0"><canvas width="64" height="64"></canvas><div class="cd"></div><div class="lk"></div></div>
-    <div class="ab sp" data-i="1" style="right:96px;bottom:60px"><canvas width="64" height="64"></canvas><div class="cd"></div><div class="lk"></div></div>
-    <div class="ab sp" data-i="2" style="right:54px;bottom:104px"><canvas width="64" height="64"></canvas><div class="cd"></div><div class="lk"></div></div>
-    <div class="ab sp" data-i="3" style="right:0;bottom:116px"><canvas width="64" height="64"></canvas><div class="cd"></div><div class="lk"></div></div>
+    <div class="ab" id="cast"><canvas width="64" height="64"></canvas><div class="cd"></div><div class="lbl">LANÇAR</div><kbd>␣</kbd></div>
+    <div class="ab sp" data-i="0" style="right:104px;bottom:0"><canvas width="64" height="64"></canvas><div class="cd"></div><div class="lk"></div><kbd>F1</kbd></div>
+    <div class="ab sp" data-i="1" style="right:96px;bottom:60px"><canvas width="64" height="64"></canvas><div class="cd"></div><div class="lk"></div><kbd>F2</kbd></div>
+    <div class="ab sp" data-i="2" style="right:54px;bottom:104px"><canvas width="64" height="64"></canvas><div class="cd"></div><div class="lk"></div><kbd>F3</kbd></div>
+    <div class="ab sp" data-i="3" style="right:0;bottom:116px"><canvas width="64" height="64"></canvas><div class="cd"></div><div class="lk"></div><kbd>F4</kbd></div>
     <div class="ab pot" id="potHp" style="right:166px;bottom:2px;background:radial-gradient(#d9343b,#5a0f12)"><canvas width="32" height="32"></canvas><b id="nHp">0</b></div>
     <div class="ab pot" id="potMp" style="right:160px;bottom:52px;background:radial-gradient(#2f63e0,#0f1d5a)"><canvas width="32" height="32"></canvas><b id="nMp">0</b></div>
   </div>
@@ -378,10 +438,15 @@ html:not(.touch) #feed{bottom:20px}
   <div id="deathMsg">Você morreu<small style="font-size:18px;font-family:Poppins">Renascendo na cidade...</small></div>
 </div>
 
+<div id="frReq"><div id="frReqTxt"></div><button class="gold-btn" id="frYes">Aceitar</button><button class="sbtn" id="frNo">Recusar</button></div>
+<div id="loading"><div class="lbg"></div><div class="lc">
+  <div class="lsub">Viajando para</div><div class="lname" id="ldName">—</div><div class="ltown" id="ldTown"></div>
+  <div class="lbar"><i id="ldBar"></i></div><div class="ltip" id="ldTip"></div>
+</div></div>
 <!-- PAINÉIS -->
 <div class="modal" id="mPanel"><div class="glass">
   <div class="mh"><h2 id="panelTitle">Personagem</h2>
-    <div class="tabs2"><button data-tab="inv">Mochila</button><button data-tab="stats">Atributos</button><button data-tab="quest">Missão</button></div>
+    <div class="tabs2"><button data-tab="inv">Mochila</button><button data-tab="stats">Atributos</button><button data-tab="quest">Missão</button><button data-tab="friends">Amigos</button></div>
     <button class="x" data-close>✕</button></div>
   <div class="mb">
     <div id="tabInv">
@@ -392,6 +457,11 @@ html:not(.touch) #feed{bottom:20px}
       <div class="kv" id="kv"></div>
       <div id="ptsTxt" style="margin-bottom:6px;color:#86efac;font-size:13px"></div>
       <div id="stats"></div>
+    </div>
+    <div id="tabFriends" style="display:none">
+      <div class="frAdd"><input class="field" id="frName" maxlength="16" placeholder="Nome do jogador" autocomplete="off"><button class="gold-btn" id="frAddBtn">Adicionar</button></div>
+      <div id="frNear"></div>
+      <div id="frList"></div>
     </div>
     <div id="tabQuest" style="display:none"><div id="task" style="font-family:Lora;font-size:17px;line-height:1.5"></div></div>
   </div>
@@ -420,31 +490,66 @@ html:not(.touch) #feed{bottom:20px}
 <script src="enemy-assets.js"></script>
 <script src="sprites.js"></script>
 <script src="chars.js"></script>
+<script src="music.js"></script>
 <script src="game.js"></script>
+<div id="installGate"><div class="gbox">
+  <img class="gicon" src="assets/ui/icon-192.png" alt="">
+  <h3>Instale o jogo no seu celular</h3>
+  <p>Jogue <b>em tela cheia</b>, deitado, direto pelo ícone na tela inicial. Abre mais rápido e sem a barra do navegador.</p>
+  <div id="gateSteps"></div>
+  <button class="gold-btn" id="gateInstall"><svg viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 19h14"/></svg>INSTALAR AGORA</button>
+  <button id="gateLater">Continuar no navegador</button>
+</div></div>
 <div id="installHelp"><div class="box"><h3>Instalar o jogo</h3><div id="installSteps"></div><button class="gold-btn" id="installOk">ENTENDI</button></div></div>
 <script>
-// Instalação no celular (PWA): botão "Instalar jogo" na tela de título
+// Instalação no celular (PWA)
+//  • No celular, pelo navegador: assim que a tela de título aparece, abre o convite "Instale o jogo".
+//  • Android/Chrome: o botão INSTALAR AGORA abre a instalação do próprio celular.
+//  • iPhone ou navegador sem instalação automática: mostra o passo a passo.
+//  • Já instalado (aberto pelo ícone): nada aparece.
 (function () {
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(function () { });
-  var btn = document.getElementById('installBtn'), help = document.getElementById('installHelp'), steps = document.getElementById('installSteps');
+  var $ = function (id) { return document.getElementById(id); };
+  var btn = $('installBtn'), help = $('installHelp'), steps = $('installSteps'), gate = $('installGate');
   var ua = navigator.userAgent, isIOS = /iPhone|iPad|iPod/i.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   var isMobile = isIOS || /Android|Mobi/i.test(ua) || (navigator.maxTouchPoints > 0 && Math.min(screen.width, screen.height) < 820);
   var installed = function () { return matchMedia('(display-mode: standalone)').matches || matchMedia('(display-mode: fullscreen)').matches || navigator.standalone === true; };
-  var deferred = null;
+  var deferred = null, gateShown = false;
+  var STEPS_IOS = '<ol><li>Toque no botão <b>Compartilhar</b> (quadrado com seta ⬆) do Safari.</li><li>Escolha <b>Adicionar à Tela de Início</b>.</li><li>Toque em <b>Adicionar</b>. O ícone do Piper aparece no seu celular.</li></ol>';
+  var STEPS_OTHER = '<ol><li>Toque no menu <b>⋮</b> do navegador (canto superior).</li><li>Escolha <b>Instalar app</b> ou <b>Adicionar à tela inicial</b>.</li><li>Confirme em <b>Instalar</b>. O ícone do Piper aparece no seu celular.</li></ol>';
   function refresh() { btn.style.display = (!installed() && (deferred || isMobile)) ? 'flex' : 'none'; }
+  function closeGate() { gate.classList.remove('on'); setTimeout(function () { gate.style.display = 'none'; }, 300); }
+  function install() {
+    if (deferred) {
+      var d = deferred; deferred = null; d.prompt();
+      d.userChoice.then(function (r) { if (r.outcome === 'accepted') closeGate(); else deferred = d; refresh(); }).catch(refresh);
+      return;
+    }
+    // sem instalação automática: passo a passo dentro do convite
+    $('gateSteps').innerHTML = isIOS ? STEPS_IOS : STEPS_OTHER; $('gateSteps').style.display = 'block';
+  }
+  function openGate() {
+    if (gateShown || installed() || !isMobile) return;
+    try { if (sessionStorage.getItem('piper_gate') === '0') return; } catch (e) { }
+    gateShown = true; $('gateSteps').style.display = 'none';
+    gate.style.display = 'flex'; void gate.offsetWidth; gate.classList.add('on');
+  }
   window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault(); deferred = e; refresh(); });
-  window.addEventListener('appinstalled', function () { deferred = null; btn.style.display = 'none'; });
-  btn.addEventListener('pointerdown', function (e) { e.stopPropagation(); });   // não abre o login ao tocar no botão
+  window.addEventListener('appinstalled', function () { deferred = null; btn.style.display = 'none'; closeGate(); });
+  // mostra o convite quando a tela de título aparece (depois da abertura "Epiper Tecnologia apresenta")
+  var poll = setInterval(function () {
+    var title = $('title'); if (!title) return;
+    if (getComputedStyle(title).display !== 'none') { clearInterval(poll); setTimeout(openGate, 500); }
+  }, 250);
+  [btn, help, gate].forEach(function (el) { el.addEventListener('pointerdown', function (e) { e.stopPropagation(); }); });
   btn.addEventListener('click', function (e) {
     e.stopPropagation();
-    if (deferred) { var d = deferred; deferred = null; d.prompt(); d.userChoice.then(function (r) { if (r.outcome !== 'accepted') deferred = d; refresh(); }).catch(refresh); return; }
-    steps.innerHTML = isIOS
-      ? '<ol><li>Toque no botão <b>Compartilhar</b> (quadrado com seta ⬆) do Safari.</li><li>Escolha <b>Adicionar à Tela de Início</b>.</li><li>Toque em <b>Adicionar</b>. O ícone do Piper aparece no seu celular.</li></ol>'
-      : '<ol><li>Toque no menu <b>⋮</b> do navegador (canto superior).</li><li>Escolha <b>Instalar app</b> ou <b>Adicionar à tela inicial</b>.</li><li>Confirme em <b>Instalar</b>. O ícone do Piper aparece no seu celular.</li></ol>';
-    help.style.display = 'flex';
+    if (deferred) return install();
+    steps.innerHTML = isIOS ? STEPS_IOS : STEPS_OTHER; help.style.display = 'flex';
   });
-  help.addEventListener('pointerdown', function (e) { e.stopPropagation(); });
-  document.getElementById('installOk').addEventListener('click', function () { help.style.display = 'none'; });
+  $('installOk').addEventListener('click', function () { help.style.display = 'none'; });
+  $('gateInstall').addEventListener('click', function (e) { e.stopPropagation(); install(); });
+  $('gateLater').addEventListener('click', function (e) { e.stopPropagation(); try { sessionStorage.setItem('piper_gate', '0'); } catch (_) { } closeGate(); });
   refresh();
 })();
 </script>

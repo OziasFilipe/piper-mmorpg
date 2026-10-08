@@ -123,6 +123,24 @@ def monster_motion_sheet(sprite, destination):
     sheet.save(destination, optimize=True)
 
 
+def rabbit_motion_sheet(sprite, destination):
+    """Coelho usa passadas em salto: agacha, impulsiona, paira e aterrissa."""
+    sheet = Image.new('RGBA', (256 * ENEMY_FRAMES, 256), (0, 0, 0, 0))
+    poses = (
+        (1.00, 1.00, 0, 0, 0),       # repouso
+        (0.92, 1.08, -5, 0, 2.5),    # agacha antes do salto
+        (1.04, 0.96, 0, -7, -3.0),   # impulso
+        (1.11, 0.89, 8, -15, -7.0),  # salto no ar
+        (1.03, 0.98, 12, -4, -2.0),  # aterrissagem
+        (0.94, 1.07, -4, 0, 3.0),    # prepara o bote/fuga
+        (1.16, 0.85, 14, -10, -8.0), # disparada
+        (1.04, 0.97, 5, -2, -2.0),   # recuperação
+    )
+    for frame, pose in enumerate(poses):
+        sheet.alpha_composite(motion_pose(sprite, *pose), (frame * 256, 0))
+    sheet.save(destination, optimize=True)
+
+
 def monster_sheets(source):
     atlas = Image.open(source).convert('RGBA')
     ENEMIES.mkdir(parents=True, exist_ok=True)
@@ -162,7 +180,7 @@ def motion_pose(sprite, scale_x, scale_y, shift_x, shift_y, angle, width=256, he
     alpha_box = subject.getchannel('A').getbbox()
     frame = Image.new('RGBA', (width, height), (0, 0, 0, 0))
     x = (width - subject.width) // 2 + shift_x
-    y = ground - alpha_box[3]
+    y = ground - alpha_box[3] + shift_y
     frame.alpha_composite(subject, (x, y))
     return frame
 
@@ -179,10 +197,15 @@ def main():
     parser.add_argument('--props', type=Path)
     parser.add_argument('--refresh-motion', action='store_true', help='expande as folhas já existentes para 8 quadros de movimento')
     parser.add_argument('--normalize-npcs', action='store_true', help='iguala a escala visual dos NPCs ao personagem principal')
+    parser.add_argument('--rabbit', type=Path, help='arte-base transparente para reconstruir o coelho com saltos')
     args = parser.parse_args()
     if args.normalize_npcs:
         for source in CHARS.glob('body_npc_*.png'):
             normalize_npc_sheet(source, source)
+        return
+    if args.rabbit:
+        source = Image.open(args.rabbit).convert('RGBA')
+        rabbit_motion_sheet(fit(source.crop(source.getchannel('A').getbbox()), 256, 256, padding=12), ENEMIES / 'rabbit.png')
         return
     if args.refresh_motion:
         # Primeiro quadro de cada folha existente é a pose-base de melhor leitura.

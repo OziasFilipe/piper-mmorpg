@@ -2,6 +2,14 @@
 (function (root) {
   const D = {};
   D.W = 160; D.H = 160;
+  // Portais no fim da estrada de cada terra (2 quadrados de altura, sobre a estrada).
+  // Oeste: volta para a terra anterior. Leste: segue para a próxima. Posições locais da região.
+  D.portalsOf = r => {
+    const P = [], y = D.H >> 1, n = 4;   // n = número de regiões (Vale, Ilha, Picos, Sombrias)
+    if (r > 0) P.push({ x: 5, y, to: r - 1, back: true });
+    if (r < n - 1) P.push({ x: D.W - 7, y, to: r + 1, back: false });
+    return P;
+  };
   D.GAME = 'As Aventuras do Piper';
   D.HAIR_STYLES = { curto: 'Curto', longo: 'Longo', rabo: 'Rabo de cavalo' };
   D.HAIR_COLORS = { preto: '#2b2329', castanho: '#6e4024', loiro: '#e6c25e', ruivo: '#c4492b', branco: '#ecebe7', azul: '#3c6bd2', rosa: '#e07ab0' };
@@ -107,6 +115,9 @@
   };
 
   D.ZONES = {
+    // Faixa ao redor da cidade inicial: apresenta os três inimigos de nível 1
+    // antes de o jogador alcançar os campos e a floresta mais perigosos.
+    starter: [['rabbit', 3], ['rat', 5], ['snake', 3]],
     meadow: [['rabbit', 3], ['rat', 5], ['snake', 3]],
     forest: [['wolf', 4], ['goblin', 4], ['bear', 2]],
     wild:   [['orc', 5], ['shaman', 2], ['troll', 2]],
@@ -139,7 +150,7 @@
   // wx/wy = posição no mapa-múndi (0-100). zones = [perto da cidade, longe da cidade].
   D.REGIONS = [
     { id: 0, name: 'Vale de Aurora', town: 'Aurora', biome: 'green', lvl: 1, cost: 0, wx: 22, wy: 55,
-      desc: 'Campos, florestas, deserto a nordeste e a caverna do dragão a sudeste.',
+      desc: 'Campos iniciais com coelhos, ratos e cobras; florestas, deserto a nordeste e caverna do dragão a sudeste.',
       labels: [{ x: 80, y: 66, t: 'Aurora' }, { x: 128, y: 30, t: 'Deserto' }, { x: 130, y: 132, t: 'Caverna' }, { x: 80, y: 40, t: 'Campos' }, { x: 30, y: 120, t: 'Floresta' }] },
     { id: 1, name: 'Ilha Coral', town: 'Porto Coral', biome: 'island', lvl: 10, cost: 120, wx: 58, wy: 78, zones: ['coast', 'jungle'],
       desc: 'Praias e selvas. Goblins, cobras e escorpiões na costa; orcs e xamãs na selva.',

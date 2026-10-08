@@ -5,8 +5,10 @@ const WORLD = (function () {
   // texturas e objetos mais ricos para não parecer um RPG mobile antigo puro.
   const files = {
     oak: 'assets/world/oak-sm.png',
+    pine: 'assets/world/pine-sm.png',
     hub: 'assets/world/hub-sm.png',
     rock: 'assets/world/rock-sm.png',
+    mossRock: 'assets/world/moss-rock-sm.png',
     grass: 'assets/world/grass-pixel.png'
   };
   const images = {};
@@ -27,8 +29,10 @@ const WORLD = (function () {
     load,
     get ready() { return ready; },
     get oak() { return images.oak; },
+    get pine() { return images.pine; },
     get hub() { return images.hub; },
     get rock() { return images.rock; },
+    get mossRock() { return images.mossRock; },
     get grass() { return images.grass; },
     get water() { return images.water; },
     get bridge() { return images.bridge; }
