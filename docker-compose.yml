@@ -1,5 +1,5 @@
 # As Aventuras do Piper — subir na VPS:  docker compose up -d --build
-# Precisa de um arquivo .env ao lado deste, com:  DOMINIO=jogo.seudominio.com.br  e  ADMIN_PASSWORD=sua-senha-forte
+# Precisa de um arquivo .env ao lado deste, com:  DOMINIO=jogo.seudominio.com.br  (opcional: ADMIN_PASSWORD=outra-senha)
 # (sem domínio? use o IP da VPS assim:  DOMINIO=203-0-113-10.sslip.io)
 services:
   jogo:
@@ -13,7 +13,7 @@ services:
       - PORT=3000
       - DATA_DIR=/data
       - XP_RATE=2
-      - ADMIN_PASSWORD=${ADMIN_PASSWORD:?Coloque ADMIN_PASSWORD=sua-senha-forte no arquivo .env}   # senha do painel /admin
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}   # senha do painel /admin (vazio = senha padrão 821760)
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-}   # opcional: sites que podem abrir o jogo (ex.: https://piper.vercel.app)
     volumes:
       - piper-dados:/data          # personagens salvos (SQLite) — sobrevivem a atualizações

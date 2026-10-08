@@ -13,5 +13,5 @@ if (server) {
   console.log('config.js -> servidor do jogo na própria Vercel (/api/server)');
   const hasDb = process.env.TURSO_DATABASE_URL || process.env.LIBSQL_URL || (process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN) || (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN);
   if (!hasDb) console.warn('[AVISO] Sem banco conectado (Turso = SQLite na nuvem): os personagens ficam só na memória e somem quando o servidor reinicia. Veja VERCEL.md.');
-  if (!process.env.ADMIN_PASSWORD) console.warn('[AVISO] ADMIN_PASSWORD não definida: o painel /admin fica desligado.');
+  if (!process.env.ADMIN_PASSWORD) console.warn('[AVISO] Painel /admin usando a senha padrão. Para trocar, crie ADMIN_PASSWORD.');
 }

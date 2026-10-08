@@ -666,8 +666,9 @@ function loadFile(f) {
   fileCache.set(f, c); return c;
 }
 // ------------------------------------------------------------------ PAINEL ADMIN (/admin)
-// Senha na variável ADMIN_PASSWORD. Sem ela, o painel fica desligado.
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
+// Senha padrão do painel: 821760. Para trocar, defina a variável ADMIN_PASSWORD no servidor
+// (ela tem prioridade sobre a padrão).
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '821760';
 const adminTokens = new Map(), adminTries = new Map();
 const onlineHist = [];   // jogadores online a cada minuto (últimas 24 h)
 let peakToday = 0, peakDay = new Date().toDateString();
@@ -1062,7 +1063,7 @@ setInterval(() => { for (const p of players.values()) persist(p); saveDb(); }, 3
 async function shutdown() { for (const p of players.values()) persist(p); try { await Promise.race([store.flushAsync(), new Promise(r => setTimeout(r, 4000))]); } catch (e) { } process.exit(0); }
 process.on('SIGINT', shutdown); process.on('SIGTERM', shutdown);
 
-logEv('start', null, `Servidor iniciado (Node ${process.version})` + (ADMIN_PASSWORD ? '' : ' — painel admin desligado: defina ADMIN_PASSWORD'));
+logEv('start', null, `Servidor iniciado (Node ${process.version})` + (process.env.ADMIN_PASSWORD ? '' : ' — painel admin com a senha padrão'));
 server.on('error', e => { console.error('Não foi possível abrir a porta ' + PORT + ':', e.message); process.exit(1); });
 wss.on('error', e => { console.error('Não foi possível abrir a porta ' + PORT + ':', e.message); process.exit(1); });   // o ws repassa o erro da porta para cá
 if (process.env.VERCEL) {
