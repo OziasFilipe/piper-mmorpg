@@ -1,0 +1,44 @@
+# As Aventuras do Piper — subir na VPS:  docker compose up -d --build
+# Precisa de um arquivo .env ao lado deste, com:  DOMINIO=jogo.seudominio.com.br
+# (sem domínio? use o IP da VPS assim:  DOMINIO=203-0-113-10.sslip.io)
+services:
+  jogo:
+    build: .
+    image: aventuras-do-piper
+    container_name: piper-jogo
+    restart: unless-stopped
+    init: true
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - DATA_DIR=/data
+      - XP_RATE=2
+    volumes:
+      - piper-dados:/data          # personagens salvos (SQLite) — sobrevivem a atualizações
+    expose:
+      - "3000"
+    stop_grace_period: 15s         # tempo para salvar todos os jogadores ao desligar
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  # HTTPS automático (Let's Encrypt). Necessário para o botão "Instalar jogo" e para o celular conectar com segurança.
+  caddy:
+    image: caddy:2-alpine
+    container_name: piper-https
+    restart: unless-stopped
+    depends_on: [jogo]
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - DOMINIO=${DOMINIO:?Crie o arquivo .env com DOMINIO=seu.dominio}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-dados:/data
+      - caddy-config:/config
+
+volumes:
+  piper-dados:
+  caddy-dados:
+  caddy-config:

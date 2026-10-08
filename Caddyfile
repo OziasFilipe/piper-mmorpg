@@ -1,0 +1,5 @@
+# Recebe https://SEU_DOMINIO e repassa para o jogo (inclui a conexão WebSocket do jogo).
+{$DOMINIO} {
+	encode zstd gzip
+	reverse_proxy jogo:3000
+}

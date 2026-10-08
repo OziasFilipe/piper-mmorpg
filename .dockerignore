@@ -1,0 +1,16 @@
+node_modules
+data
+.git
+.github
+Claude outputs
+piper mmorpg
+tools
+*.png
+!public/**/*.png
+*.md
+*.bat
+render.yaml
+docker-compose*.yml
+Caddyfile
+.env
+__pycache__
