@@ -154,14 +154,16 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
 
 <script>
 (function () {
-  const API = String(window.PIPER_SERVER || '').replace(/\/$/, '') + '/admin/api/';
+  const SRV = String(window.PIPER_SERVER || '').replace(/\/$/, ''), VAPI = SRV ? '' : String(window.PIPER_API || '').replace(/\/$/, '');
+  // servidor na própria Vercel: /api/server?r=admin/api/<rota>&...   noutros lugares: /admin/api/<rota>?...
+  const apiUrl = path => { if (!VAPI) return SRV + '/admin/api/' + path; const [r, qs] = path.split('?'); return VAPI + '?r=admin/api/' + r + (qs ? '&' + qs : ''); };
   const $ = id => document.getElementById(id);
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const store = { get(k) { try { return sessionStorage.getItem(k); } catch (e) { return null; } }, set(k, v) { try { v == null ? sessionStorage.removeItem(k) : sessionStorage.setItem(k, v); } catch (e) { } } };
   let token = store.get('piper_admin'), tab = 'overview', timer = null;
 
   async function api(path, body) {
-    const r = await fetch(API + path, { method: body ? 'POST' : 'GET', headers: Object.assign({ 'Content-Type': 'application/json' }, token ? { Authorization: 'Bearer ' + token } : {}), body: body ? JSON.stringify(body) : undefined, cache: 'no-store' });
+    const r = await fetch(apiUrl(path), { method: body ? 'POST' : 'GET', headers: Object.assign({ 'Content-Type': 'application/json' }, token ? { Authorization: 'Bearer ' + token } : {}), body: body ? JSON.stringify(body) : undefined, cache: 'no-store' });
     let j = {}; try { j = await r.json(); } catch (e) { }
     if (r.status === 401 && path !== 'login') { logout(true); throw new Error(j.error || 'Sessão expirada.'); }
     if (!r.ok) throw new Error(j.error || ('Erro ' + r.status));
