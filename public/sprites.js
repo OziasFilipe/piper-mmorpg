@@ -108,6 +108,65 @@ const SPR = (function () {
     });
   }
 
+  // Fachadas do centro: mantêm a leitura pixel-art e encaixam exatamente nos
+  // 4 x 3 tiles de parede que o servidor marca como sólidos.
+  function townShop(kind) {
+    return memo('town-shop-' + kind, () => {
+      const c = mk(128, 112), g = c.getContext('2d');
+      g.imageSmoothingEnabled = false;
+      const skin = {
+        forge:  { roof: '#9d4c2e', roofHi: '#df7950', awning: '#e0a03d', sign: 'FORJA', icon: '⚒' },
+        potion: { roof: '#395a91', roofHi: '#6290d1', awning: '#b94f72', sign: 'POÇÕES', icon: '✦' },
+        guild:  { roof: '#5a487f', roofHi: '#9074bb', awning: '#d1ad55', sign: 'MISSÕES', icon: '!' },
+        travel: { roof: '#356957', roofHi: '#62a580', awning: '#4f8fd0', sign: 'VIAGENS', icon: '↟' }
+      }[kind] || { roof: '#70482d', roofHi: '#a87044', awning: '#d1ad55', sign: 'LOJA', icon: '•' };
+      const px = (x, y, w, h, col) => { g.fillStyle = col; g.fillRect(x, y, w, h); };
+      // Sombra no chão e fundação de pedra.
+      px(5, 101, 118, 7, 'rgba(22,16,13,.38)');
+      px(8, 61, 112, 40, '#4a4038');
+      for (let y = 64; y < 100; y += 9) for (let x = 10 + ((y / 9) % 2 ? 8 : 0); x < 118; x += 20) {
+        px(x, y, 18, 7, '#71685d'); px(x + 1, y + 1, 16, 1, '#958b7d');
+      }
+      // Telhado em camadas, com beiral e contorno escuro.
+      px(3, 40, 122, 22, '#271a16');
+      for (let y = 12; y < 55; y += 7) {
+        const inset = Math.max(7, 47 - y);
+        px(inset, y, 128 - inset * 2, 8, skin.roof);
+        px(inset + 3, y + 1, 128 - inset * 2 - 6, 2, skin.roofHi);
+        for (let x = inset + ((y / 7) % 2 ? 6 : 0); x < 128 - inset - 2; x += 13) px(x, y + 5, 10, 1, '#63311f');
+      }
+      px(3, 55, 122, 6, '#2a1b15'); px(6, 56, 116, 2, '#e0b56c');
+      // Postes, porta e janelas iluminadas.
+      px(12, 61, 7, 42, '#42291c'); px(15, 62, 2, 38, '#a86b35');
+      px(109, 61, 7, 42, '#42291c'); px(110, 62, 2, 38, '#a86b35');
+      px(52, 72, 24, 30, '#2b1c19'); px(55, 75, 18, 27, '#704227'); px(63, 76, 2, 25, '#c9934d');
+      for (const x of [27, 88]) { px(x, 72, 16, 18, '#2d241d'); px(x + 3, 75, 10, 11, '#f4c56c'); px(x + 4, 76, 8, 3, '#fff0a2'); }
+      // Placa e toldo que identificam a atividade sem usar imagem externa.
+      px(35, 45, 58, 18, '#241813'); px(37, 47, 54, 14, '#b98642'); px(39, 49, 50, 10, '#ead18a');
+      g.fillStyle = '#3a2418'; g.font = 'bold 8px monospace'; g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillText(skin.sign, 64, 54);
+      px(21, 62, 29, 9, skin.awning); px(79, 62, 29, 9, skin.awning);
+      for (let x = 22; x < 50; x += 7) px(x, 62, 3, 9, '#f5dfad');
+      for (let x = 80; x < 108; x += 7) px(x, 62, 3, 9, '#f5dfad');
+      g.fillStyle = '#fff3b0'; g.font = 'bold 14px monospace'; g.fillText(skin.icon, 64, 28);
+      return c;
+    });
+  }
+  function townFountain() {
+    return memo('town-fountain', () => {
+      const c = mk(64, 72), g = c.getContext('2d');
+      g.imageSmoothingEnabled = false;
+      const px = (x, y, w, h, col) => { g.fillStyle = col; g.fillRect(x, y, w, h); };
+      px(5, 55, 54, 10, 'rgba(20,14,10,.35)');
+      px(4, 43, 56, 17, '#3c3938'); px(7, 39, 50, 18, '#7f7b72'); px(10, 41, 44, 14, '#c1b9a6');
+      px(14, 43, 36, 10, '#1769a6'); px(17, 44, 30, 7, '#39a9d6'); px(21, 44, 20, 2, '#b4f5ff');
+      px(25, 21, 14, 24, '#5c5b58'); px(27, 19, 10, 26, '#bcb5a4'); px(29, 9, 6, 12, '#d9c44e');
+      px(31, 2, 2, 13, '#8feaff'); px(27, 12, 10, 3, '#57c9ec'); px(24, 16, 16, 3, '#87e8ff');
+      px(17, 57, 30, 4, '#9f9789'); px(22, 61, 20, 3, '#69645e');
+      return c;
+    });
+  }
+
   // ------------------------------------------------------------ ARMAS
   function weapon(r, look, x, orb) {
     const B = '#dfe6ee', G = '#c9a227', W = '#7a4a20';
@@ -423,5 +482,5 @@ const SPR = (function () {
   }
   const resetGround = () => chunks.clear();
 
-  return { tile, drawGround, resetGround, treeObj, rockObj, entity, itemIcon, spellIcon, hash, mk };
+  return { tile, drawGround, resetGround, treeObj, rockObj, townShop, townFountain, entity, itemIcon, spellIcon, hash, mk };
 })();

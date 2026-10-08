@@ -37,6 +37,17 @@ const set = (x, y, v) => { if (x >= 0 && y >= 0 && x < TW && y < H) tiles[y * TW
 const regionOf = x => Math.max(0, Math.min(NR - 1, Math.floor(x / W)));
 const townOf = r => ({ x: r * W + CX, y: CY });
 const isTown = (x, y) => Math.abs(x - regionOf(x) * W - CX) <= 10 && Math.abs(y - CY) <= 10;
+// As fachadas das lojas são objetos altos. Elas coincidem com os tiles WALL
+// enviados ao cliente, mas a regra explícita evita que uma alteração futura de
+// textura transforme uma construção em um lugar atravessável por engano.
+const TOWN_BUILDINGS = [
+  { x: -8, y: -8, w: 4, h: 3 }, { x: 5, y: -8, w: 4, h: 3 },
+  { x: -8, y: 5, w: 4, h: 3 }, { x: 5, y: 5, w: 4, h: 3 }
+];
+function townObjectSolid(x, y) {
+  const lx = x - regionOf(x) * W, ly = y - CY;
+  return TOWN_BUILDINGS.some(b => lx >= CX + b.x && lx < CX + b.x + b.w && ly >= b.y && ly < b.y + b.h);
+}
 const inCave = (x, y) => { const r = regionOf(x), lx = x - r * W; return REGIONS[r].biome === 'green' && lx > CX + 28 && y > CY + 28; };
 const inDesert = (x, y) => { const r = regionOf(x), lx = x - r * W; return REGIONS[r].biome === 'green' && lx > CX + 28 && y < CY - 28; };
 const BASE = { green: T.GRASS, island: T.GRASS, snow: T.SNOW, dark: T.CAVE };
@@ -146,7 +157,7 @@ function place(e, x, y) {
 }
 function unplace(e) { if (occ.get(e.y * TW + e.x) === e) occ.delete(e.y * TW + e.x); cellDel(e); }
 function walkable(x, y, forMon) {
-  if (BLOCK[get(x, y)]) return false;
+  if (BLOCK[get(x, y)] || townObjectSolid(x, y)) return false;
   if (forMon && isTown(x, y)) return false;
   return true;
 }

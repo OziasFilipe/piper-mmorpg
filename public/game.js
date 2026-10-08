@@ -29,6 +29,10 @@
   let miniImg = null, shopData = null, shopTab = 'buy', selSpell = 0, selItem = null;
   let K = 1, UI = 1, LWW = 0, LHH = 0, mobileMode = false; // escala mundo->dispositivo, fator de texto, tamanho lógico da tela
   const LS = { get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (e) { } } };
+  const townShops = [
+    { dx: -8, dy: -8, kind: 'forge' }, { dx: 5, dy: -8, kind: 'potion' },
+    { dx: -8, dy: 5, kind: 'guild' }, { dx: 5, dy: 5, kind: 'travel' }
+  ];
 
   // ======================================================== ABERTURA
   const show = (id, on) => $(id).style.display = on ? (id === 'game' || id === 'title' ? 'block' : 'flex') : 'none';
@@ -288,11 +292,6 @@
     const x0 = Math.floor(camX) - 1, y0 = Math.floor(camY) - 1, x1 = x0 + Math.ceil(LWW / TS) + 2, y1 = y0 + Math.ceil(LHH / TS) + 3;
     const wf = Math.floor(now / 350) % 7;
     SPR.drawGround(ctx, x0, y0, x1, y1, ox, oy, now, tileAt, K);
-    // Marco visual do hub: a construção fica sob personagens e objetos para
-    // preservar a leitura de profundidade do mapa.
-    if (WORLD.hub && CX >= x0 - 7 && CX <= x1 + 7 && CY >= y0 - 7 && CY <= y1 + 7) {
-      ctx.drawImage(WORLD.hub, (CX - 3.2) * TS + ox, (CY - 4.12) * TS + oy, 208, 160);
-    }
     for (const f of fxs) {
       const age = now - f.t0, sx = f.x * TS + ox, sy = f.y * TS + oy;
       if (f.k === 'blood' && age < 1500) { ctx.globalAlpha = 1 - age / 1500; ctx.fillStyle = '#9a0a0a'; ctx.beginPath(); ctx.ellipse(sx + 16, sy + 24, 7, 3, 0, 0, 7); ctx.fill(); ctx.globalAlpha = 1; }
@@ -307,6 +306,16 @@
     const rows = new Map();
     for (const e of ents.values()) { const p = rpos(e, now); const ry = Math.round(p.y); if (!rows.has(ry)) rows.set(ry, []); rows.get(ry).push([e, p]); }
     for (let y = y0; y <= y1 + 1; y++) {
+      // As fachadas entram na mesma ordenação vertical de árvores e entidades:
+      // o herói não aparece por cima de um prédio quando está atrás dele.
+      for (const shop of townShops) if (y === CY + shop.dy + 2) {
+        const img = SPR.townShop(shop.kind);
+        ctx.drawImage(img, (CX + shop.dx) * TS + ox, (CY + shop.dy) * TS + oy - 16);
+      }
+      if (y === CY + 1) {
+        const fountain = SPR.townFountain();
+        ctx.drawImage(fountain, CX * TS + ox, CY * TS + oy - 8);
+      }
       for (let x = x0; x <= x1; x++) {
         const t = tileAt(x, y);
         if (t === T.TREE) {
