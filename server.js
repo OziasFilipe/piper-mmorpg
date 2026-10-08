@@ -1,6 +1,7 @@
 'use strict';
 // As Aventuras do Piper — servidor MMORPG 2D (Node.js + WebSocket)
 const http = require('http'), fs = require('fs'), path = require('path'), crypto = require('crypto'), zlib = require('zlib');
+const Database = require('better-sqlite3');
 const BOOT = Date.now();
 const { WebSocketServer } = require('ws');
 const D = require('./public/defs.js');
@@ -9,7 +10,8 @@ const { T, BLOCK, VOC, ITEMS, SPELLS, MON, ZONES, TASKS, NPCS, SHOPS, STATS, xpF
 const PORT = +process.env.PORT || 3000;
 const XP_RATE = +process.env.XP_RATE || 2;
 const W = D.W, H = D.H, CX = W >> 1, CY = H >> 1;
-const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data'), SAVE_FILE = path.join(DATA_DIR, 'players.json');
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
+const SQLITE_FILE = path.join(DATA_DIR, 'players.sqlite'), LEGACY_SAVE_FILE = path.join(DATA_DIR, 'players.json');
 const TICK = 100;
 
 // ------------------------------------------------------------------ MUNDO (várias regiões)
@@ -196,11 +198,56 @@ spawns.forEach(spawnMon);
 console.log(`${NR} regiões ${W}x${H} geradas, ${spawns.length} monstros.`);
 
 // ------------------------------------------------------------------ PERSISTÊNCIA
-let db = {};
-try { fs.mkdirSync(DATA_DIR, { recursive: true }); db = JSON.parse(fs.readFileSync(SAVE_FILE, 'utf8')); } catch (e) { db = {}; }
-function saveDb() { try { fs.writeFileSync(SAVE_FILE + '.tmp', JSON.stringify(db)); fs.renameSync(SAVE_FILE + '.tmp', SAVE_FILE); } catch (e) { console.error('save', e); } }
 const SAVE_KEYS = ['name', 'voc', 'x', 'y', 'level', 'maxLevel', 'xp', 'hp', 'mp', 'stats', 'points', 'gold', 'inv', 'eq', 'taskIdx', 'task', 'kills', 'deaths', 'salt', 'hash', 'app'];
-function persist(p) { const o = {}; for (const k of SAVE_KEYS) o[k] = p[k]; db[p.name.toLowerCase()] = o; }
+// SQLite local. O arquivo JSON anterior é importado uma única vez e mantido
+// como cópia de segurança até uma remoção manual pelo administrador.
+fs.mkdirSync(DATA_DIR, { recursive: true });
+const db = new Database(SQLITE_FILE);
+db.pragma('journal_mode = WAL');
+db.pragma('foreign_keys = ON');
+db.exec(`
+  CREATE TABLE IF NOT EXISTS players (
+    username TEXT PRIMARY KEY COLLATE NOCASE,
+    name TEXT NOT NULL,
+    vocation TEXT NOT NULL,
+    password_salt TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    data_json TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_players_name ON players(name COLLATE NOCASE);
+`);
+const getPlayer = db.prepare('SELECT data_json FROM players WHERE username = ?');
+const countPlayers = db.prepare('SELECT COUNT(*) AS total FROM players');
+const upsertPlayer = db.prepare(`
+  INSERT INTO players (username, name, vocation, password_salt, password_hash, data_json)
+  VALUES (@username, @name, @voc, @salt, @hash, @data)
+  ON CONFLICT(username) DO UPDATE SET
+    name = excluded.name, vocation = excluded.vocation,
+    password_salt = excluded.password_salt, password_hash = excluded.password_hash,
+    data_json = excluded.data_json, updated_at = CURRENT_TIMESTAMP
+`);
+function persist(p) {
+  const o = {}; for (const k of SAVE_KEYS) o[k] = p[k];
+  upsertPlayer.run({ username: p.name.toLowerCase(), name: o.name, voc: o.voc, salt: o.salt, hash: o.hash, data: JSON.stringify(o) });
+}
+function loadPlayer(username) {
+  const row = getPlayer.get(username);
+  if (!row) return null;
+  try { return JSON.parse(row.data_json); } catch (e) { console.error('jogador inválido no SQLite:', username, e); return null; }
+}
+function saveDb() { try { db.pragma('wal_checkpoint(PASSIVE)'); } catch (e) { console.error('sqlite checkpoint', e); } }
+function migrateLegacyPlayers() {
+  if (countPlayers.get().total || !fs.existsSync(LEGACY_SAVE_FILE)) return;
+  try {
+    const legacy = JSON.parse(fs.readFileSync(LEGACY_SAVE_FILE, 'utf8'));
+    const rows = Object.values(legacy).filter(p => p && p.name && p.voc && p.salt && p.hash);
+    db.transaction(players => { for (const p of players) persist(p); })(rows);
+    if (rows.length) console.log(`${rows.length} jogador(es) migrado(s) para SQLite.`);
+  } catch (e) { console.error('migração players.json -> SQLite', e); }
+}
+migrateLegacyPlayers();
 const hashPw = (pw, salt) => crypto.createHash('sha256').update(salt + ':' + pw).digest('hex');
 
 // ------------------------------------------------------------------ JOGADOR
@@ -584,7 +631,7 @@ wss.on('connection', ws => {
       if (!/^[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ ]{2,15}$/.test(name)) return ws.send(JSON.stringify({ t: 'err', m: 'Nome inválido (3-16 letras).' }));
       if (pw.length < 3) return ws.send(JSON.stringify({ t: 'err', m: 'Senha muito curta (mín. 3).' }));
       const key = name.toLowerCase();
-      let data = db[key];
+      let data = loadPlayer(key);
       if (m.create) {
         if (data) return ws.send(JSON.stringify({ t: 'err', m: 'Esse nome já está em uso. Escolha outro.' }));
         if (!VOC[m.voc]) return ws.send(JSON.stringify({ t: 'err', m: 'Escolha uma vocação.' }));

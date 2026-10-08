@@ -221,8 +221,11 @@
     g.drawImage(spr, cx - side / 2, y0 - side * 0.06, side, side, size * 0.06, size * 0.08, size * 0.88, size * 0.88);
   }
   function rpos(e, now) {
-    const k = e.t0 ? Math.min(1, (now - e.t0) / e.dur) : 1;
-    return { x: e.fx + (e.x - e.fx) * k, y: e.fy + (e.y - e.fy) * k, moving: k < 1 };
+    const raw = e.t0 ? Math.min(1, (now - e.t0) / e.dur) : 1;
+    // Entrada e saída suaves em cada quadrado: tira o aspecto mecânico sem
+    // mudar a posição recebida do servidor.
+    const k = raw * raw * (3 - 2 * raw);
+    return { x: e.fx + (e.x - e.fx) * k, y: e.fy + (e.y - e.fy) * k, moving: raw < 1, progress: raw };
   }
 
   // ======================================================== MAPA
@@ -266,16 +269,19 @@
     const now = performance.now();
     const meE = ents.get(myId); if (!meE) return;
     const mp = rpos(meE, now);
-    const targetX = mp.x + 0.5 - LWW / TS / 2, targetY = mp.y + 0.2 - LHH / TS / 2;
+    // A câmera antecipa levemente o próximo passo e depois o acompanha com
+    // amortecimento, evitando a sensação de "puxão" a cada pacote de rede.
+    const stepX = mp.moving ? (meE.x - meE.fx) * 0.13 : 0, stepY = mp.moving ? (meE.y - meE.fy) * 0.10 : 0;
+    const targetX = mp.x + 0.5 + stepX - LWW / TS / 2, targetY = mp.y + 0.2 + stepY - LHH / TS / 2;
     const dt = Math.min(45, Math.max(1, now - (cam.t || now)));
     if (cam.x == null || Math.hypot(targetX - cam.x, targetY - cam.y) > 5) { cam.x = targetX; cam.y = targetY; }
     else {
-      const follow = 1 - Math.exp(-dt / 72);
+      const follow = 1 - Math.exp(-dt / 82);
       cam.x += (targetX - cam.x) * follow; cam.y += (targetY - cam.y) * follow;
     }
     cam.t = now;
     const camX = cam.x, camY = cam.y;
-    const ox = Math.round(-camX * TS * K) / K, oy = Math.round(-camY * TS * K) / K; cam.ox = ox; cam.oy = oy;
+    const ox = Math.round(-camX * TS * K * 2) / (K * 2), oy = Math.round(-camY * TS * K * 2) / (K * 2); cam.ox = ox; cam.oy = oy;
     ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = '#000'; ctx.fillRect(0, 0, cv.width, cv.height);
     ctx.setTransform(K, 0, 0, K, 0, 0); ctx.imageSmoothingEnabled = false;
     const x0 = Math.floor(camX) - 1, y0 = Math.floor(camY) - 1, x1 = x0 + Math.ceil(LWW / TS) + 2, y1 = y0 + Math.ceil(LHH / TS) + 3;
@@ -350,7 +356,7 @@
     let frame = 0;
     const attackPhase = attackLeft ? 1 - Math.min(1, attackLeft / 300) : 0;
     if (attackLeft) frame = e.kind === 'm' ? (attackPhase < .42 ? 3 : 4) : (attackPhase < .28 ? 0 : 2);
-    else if (p.moving) frame = e.kind === 'm' ? 1 + (Math.floor(now / 110 + e.id) % 2) : 1 + (e.walk % 2);
+    else if (p.moving) frame = 1 + (Math.floor(now / (e.kind === 'm' ? 110 : 92) + e.id * 1.7) % 2);
     else if (e.kind === 'm' && Math.floor(now / 440 + e.id) % 5 === 0) frame = 1;
     const attackStep = attackLeft ? Math.sin((1 - attackLeft / 300) * Math.PI) * (e.kind === 'p' ? 5.8 : 4.5) : 0;
     const dir = [[0, 1], [-1, 0], [0, -1], [1, 0]][e.dir] || [0, 0];
@@ -360,13 +366,14 @@
       : ['c', isPlayer && e.id === myId && me.voc === 'wizard' ? 'wizard' : 'warrior', '', '', '', '', '0', 'curto', 'castanho', ''].join('|');
     if (isPlayer || (typeof e.look === 'string' && e.look[0] === 'c')) {
       const scale = mobileMode ? 1.2 : 1;
-      const stepWave = p.moving ? Math.sin(now / 72 + e.id * 1.7) : 0;
-      const stride = p.moving ? stepWave * 1.35 : Math.sin(now / 420 + e.id) * .55;
+      const stepWave = p.moving ? Math.sin(now / 86 + e.id * 1.7) : 0;
+      const lift = p.moving ? Math.max(0, Math.cos(now / 86 + e.id * 1.7)) * 1.15 : 0;
+      const stride = p.moving ? stepWave * 1.65 - lift : Math.sin(now / 420 + e.id) * .55;
       const shadowW = p.moving ? 9 + Math.abs(stepWave) * 2.2 : 10;
       ctx.fillStyle = 'rgba(0,0,0,.32)'; ctx.beginPath(); ctx.ellipse(sx + 16, sy + 28.7, shadowW * scale, (3.2 + Math.abs(stepWave) * .6) * scale, 0, 0, 7); ctx.fill();
       if (e.flags & 2) { ctx.fillStyle = 'rgba(255,80,20,.28)'; ctx.beginPath(); ctx.ellipse(sx + 16, sy + 22, 17, 12, 0, 0, 7); ctx.fill(); }
       const img = CHARS.sprite(characterLook, e.dir, frame);
-      const sway = p.moving ? stepWave * .4 : Math.sin(now / 650 + e.id * 1.7) * .35;
+      const sway = p.moving ? stepWave * .7 : Math.sin(now / 650 + e.id * 1.7) * .35;
       const hurt = (e.hitUntil || 0) > now;
       ctx.save(); ctx.translate(dir[0] * attackStep, dir[1] * attackStep * .45);
       ctx.imageSmoothingEnabled = false;
@@ -691,12 +698,27 @@
   const joy = $('joy'), knob = $('knob'); let joyId = null, joyDir = -1;
   function setWalk(d) { if (d !== joyDir) { joyDir = d; send({ t: 'walk', d }); } }
   setInterval(() => { if (joyDir >= 0 && inGame) send({ t: 'walk', d: joyDir }); }, 300);
-  joy.addEventListener('pointerdown', e => { e.preventDefault(); joyId = e.pointerId; joy.setPointerCapture(e.pointerId); joyMove(e); });
-  joy.addEventListener('pointermove', e => { if (e.pointerId === joyId) joyMove(e); });
-  const joyEnd = e => { if (e.pointerId !== joyId) return; joyId = null; knob.style.transform = ''; setWalk(-1); };
+  // Alguns navegadores móveis perdem a captura do ponteiro no primeiro arrasto.
+  // O controle continua funcionando sem captura e também recebe o toque inicial.
+  joy.addEventListener('pointerdown', e => {
+    e.preventDefault(); joyId = e.pointerId;
+    try { joy.setPointerCapture(e.pointerId); } catch (_) { }
+    joyMove(e.clientX, e.clientY);
+  });
+  joy.addEventListener('pointermove', e => { if (e.pointerId === joyId) { e.preventDefault(); joyMove(e.clientX, e.clientY); } });
+  const joyEnd = e => { if (joyId !== null && e.pointerId !== joyId) return; joyId = null; knob.style.transform = ''; setWalk(-1); };
   joy.addEventListener('pointerup', joyEnd); joy.addEventListener('pointercancel', joyEnd);
-  function joyMove(e) {
-    const r = joy.getBoundingClientRect(), dx = e.clientX - (r.left + r.width / 2), dy = e.clientY - (r.top + r.height / 2);
+  // Fallback para navegadores móveis antigos: não depende de Pointer Events.
+  const touchPoint = e => e.touches[0] || e.changedTouches[0];
+  joy.addEventListener('touchstart', e => { const t = touchPoint(e); if (t) { e.preventDefault(); joyMove(t.clientX, t.clientY); } }, { passive: false });
+  joy.addEventListener('touchmove', e => { const t = touchPoint(e); if (t) { e.preventDefault(); joyMove(t.clientX, t.clientY); } }, { passive: false });
+  joy.addEventListener('touchend', e => { e.preventDefault(); joyId = null; knob.style.transform = ''; setWalk(-1); }, { passive: false });
+  joy.addEventListener('touchcancel', e => { e.preventDefault(); joyId = null; knob.style.transform = ''; setWalk(-1); }, { passive: false });
+  // Caso a página interrompa a captura ao mudar de foco, nunca deixa o personagem preso andando.
+  document.addEventListener('pointerup', joyEnd, true);
+  document.addEventListener('pointercancel', joyEnd, true);
+  function joyMove(clientX, clientY) {
+    const r = joy.getBoundingClientRect(), dx = clientX - (r.left + r.width / 2), dy = clientY - (r.top + r.height / 2);
     const d = Math.hypot(dx, dy), m = Math.min(d, 42);
     knob.style.transform = `translate(${dx / (d || 1) * m}px,${dy / (d || 1) * m}px)`;
     if (d < 14) return setWalk(-1);

@@ -2,7 +2,7 @@
 **Epiper Tecnologia** · MMORPG 2D online para celular, jogado com o aparelho deitado.
 
 ## Jogar no computador (teste local)
-1. Instale o Node.js 18+ (https://nodejs.org).
+1. Instale o Node.js 20+ (https://nodejs.org).
 2. Dê dois cliques em `iniciar.bat`. Ele abre http://localhost:3000.
 
 ## Colocar online no Render.com
@@ -35,6 +35,10 @@ Os personagens são montados em camadas (corpo, cabelo, armadura, elmo, arma e e
 Cada folha tem 3 colunas (parado, passo 1, passo 2) × 4 linhas (baixo, esquerda, cima, direita), células de 128×192.
 Para trocar por artes novas (feitas à mão ou com IA), basta substituir os PNGs mantendo esse formato.
 Para regenerar: `python3 tools/gen_chars.py` e `python3 tools/gen_ui.py` (precisa do Pillow).
+
+## Dados dos jogadores
+
+Os usuários e o progresso ficam em `data/players.sqlite`, um banco SQLite local. Na primeira execução, qualquer `data/players.json` antigo é importado automaticamente e mantido como cópia de segurança. Use um disco persistente no servidor online para manter o banco entre reinícios.
 
 ## Configuração
 Variáveis de ambiente: `PORT` (padrão 3000), `XP_RATE` (padrão 2), `DATA_DIR` (pasta dos saves, padrão `./data`).
