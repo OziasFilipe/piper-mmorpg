@@ -669,7 +669,17 @@ function loadFile(f) {
 // Senha padrão do painel: 821760. Para trocar, defina a variável ADMIN_PASSWORD no servidor
 // (ela tem prioridade sobre a padrão).
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '821760';
-const adminTokens = new Map(), adminTries = new Map();
+const adminTries = new Map();
+// Sessão do painel assinada (HMAC): vale em qualquer cópia do servidor (na Vercel cada pedido
+// pode cair numa cópia diferente). Trocar a senha invalida todas as sessões.
+const ADMIN_KEY = crypto.createHash('sha256').update('piper-admin:' + ADMIN_PASSWORD).digest();
+const signAdmin = exp => exp.toString(36) + '.' + crypto.createHmac('sha256', ADMIN_KEY).update(String(exp)).digest('base64url');
+function checkAdmin(tok, now) {
+  const [e, sig] = String(tok || '').split('.'); const exp = parseInt(e, 36);
+  if (!exp || !sig || exp < now) return false;
+  const good = signAdmin(exp).split('.')[1];
+  return sig.length === good.length && crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(good));
+}
 const onlineHist = [];   // jogadores online a cada minuto (últimas 24 h)
 let peakToday = 0, peakDay = new Date().toDateString();
 setInterval(() => {
@@ -702,12 +712,12 @@ async function adminApi(req, res, u) {
       const body = await readBody(req);
       if (!sameSecret(body.password || '', ADMIN_PASSWORD)) { recent.push(now); adminTries.set(ip, recent); logEv('admin', null, 'Senha do painel incorreta', ip); return adminSend(res, 401, { error: 'Senha incorreta.' }); }
       adminTries.delete(ip);
-      const token = crypto.randomBytes(24).toString('hex'); adminTokens.set(token, now + 12 * 3600e3);
+      const token = signAdmin(now + 12 * 3600e3);
       logEv('admin', null, 'Entrou no painel admin', ip);
       return adminSend(res, 200, { token });
     }
-    const tok = String(req.headers.authorization || '').replace(/^Bearer\s+/i, ''), exp = adminTokens.get(tok);
-    if (!exp || exp < now) { adminTokens.delete(tok); return adminSend(res, 401, { error: 'Sessão expirada. Entre de novo.' }); }
+    const tok = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+    if (!checkAdmin(tok, now)) return adminSend(res, 401, { error: 'Sessão expirada. Entre de novo.' });
     const q = new URL(req.url, 'http://x').searchParams;
     if (req.method === 'GET') {
       if (route === 'stats') {
@@ -750,7 +760,7 @@ async function adminApi(req, res, u) {
     }
     if (req.method === 'POST') {
       const b = await readBody(req);
-      if (route === 'logout') { adminTokens.delete(tok); return adminSend(res, 200, { ok: true }); }
+      if (route === 'logout') return adminSend(res, 200, { ok: true });   // o painel apaga a sessão no navegador
       if (route === 'broadcast') {
         const text = String(b.msg || '').trim().slice(0, 200); if (!text) return adminSend(res, 400, { error: 'Escreva a mensagem.' });
         broadcast({ t: 'msg', m: '[Aviso] ' + text, c: '#ffb347' }); logEv('admin', null, 'Aviso para todos: ' + text, ip);
