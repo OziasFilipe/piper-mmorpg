@@ -66,14 +66,32 @@ const SPR = (function () {
         case T.SAND: speckle(g, '#d8c07c', ['#c8ae68', '#e6d297', '#cdb571', '#f0dca1'], 42, s); for (let i = 0; i < 3; i++) { const x = hash(i, s, 3) * 15 | 0, y = hash(i, s, 4) * 15 | 0; r(x, y, 3, .5, '#b89b5d'); } break;
         case T.PATH: speckle(g, '#9b7b4f', ['#8a6b43', '#ac8c5d', '#927349', '#b09264'], 42, s); for (let i = 0; i < 5; i++) { const x = hash(i, s, 3) * 15 | 0, y = hash(i, s, 4) * 15 | 0; r(x, y, 1, 1, '#6f665b'); if (i % 2) r(x + 1, y + 1, 1, .5, '#c5a87a'); } break;
         case T.FLOOR:
-          g.fillStyle = '#8f877a'; g.fillRect(0, 0, 32, 32);
-          r(0, 0, 16, 0.5, '#6e675c'); r(0, 8, 16, 0.5, '#6e675c'); r(v % 2 ? 4 : 10, 0, 0.5, 8, '#6e675c'); r(v % 2 ? 12 : 6, 8, 0.5, 8, '#6e675c');
-          for (let i = 0; i < 10; i++) r(hash(i, s, 3) * 16 | 0, hash(i, s, 4) * 16 | 0, 1, 1, i % 2 ? '#a39b8e' : '#837b6f');
+          // Praça da cidade: blocos de pedra irregulares, com juntas escuras
+          // e desgaste leve. As bordas continuam alinhadas ao tile.
+          g.fillStyle = '#635d56'; g.fillRect(0, 0, 32, 32);
+          for (let row = 0; row < 4; row++) {
+            const off = ((row + v) & 1) ? -2 : 0;
+            for (let col = -1; col < 4; col++) {
+              const id = row * 7 + col + s, x = off + col * 5, y = row * 4;
+              const tone = ['#9c958a', '#928a7f', '#a69f94', '#877f74'][(hash(id, s, 33) * 4) | 0];
+              r(x + .35, y + .35, 4.3, 3.25, tone);
+              r(x + .8, y + .7, 2.2, .45, shade(tone, 1.12));
+              if (hash(id, s, 34) > .82) r(x + 2, y + 2, 1.1, .45, '#6e675f');
+            }
+          }
+          r(0, 0, 16, .45, '#c1b9ab'); r(0, 15.55, 16, .45, '#514c46');
           break;
         case T.WALL:
-          g.fillStyle = '#5a544d'; g.fillRect(0, 0, 32, 32);
-          for (let row = 0; row < 4; row++) for (let col = -1; col < 3; col++) { const x = col * 6 + (row % 2 ? 3 : 0); r(x + 0.5, row * 4 + 0.5, 5, 3, row === 0 ? '#9a938a' : '#7b746b'); r(x + 0.5, row * 4 + 0.5, 5, 0.5, '#a8a197'); }
-          r(0, 14, 16, 2, '#3c3833');
+          // Muralha com coroamento claro, pedras maiores e base sombreada.
+          g.fillStyle = '#3f3b37'; g.fillRect(0, 0, 32, 32);
+          r(0, 0, 16, 1.3, '#b5ada1'); r(0, 1.3, 16, .7, '#716a63');
+          for (let row = 0; row < 4; row++) for (let col = -1; col < 3; col++) {
+            const id = row * 9 + col + s, x = col * 6 + ((row + v) % 2 ? 3 : 0), y = row * 3.55 + 1.4;
+            const tone = ['#827b73', '#756e67', '#908980', '#69635e'][(hash(id, s, 51) * 4) | 0];
+            r(x + .35, y + .45, 5.1, 2.75, tone); r(x + .7, y + .75, 3.3, .4, shade(tone, 1.2));
+            if (hash(id, s, 52) > .86) r(x + 2.2, y + 1.6, .5, 1.1, '#514c47');
+          }
+          r(0, 13.8, 16, 2.2, '#34312e'); r(0, 13.8, 16, .45, '#a0978b');
           break;
         case T.CAVE: speckle(g, '#3f3228', ['#33281f', '#4b3c30', '#382c23'], 34, s); break;
         case T.CAVEWALL:
@@ -359,9 +377,41 @@ const SPR = (function () {
   // leitura clássica de RPG mobile sem transformar o mundo em baixa resolução.
   const GFILES = ['water-seamless.jpg', 'grass-pixel.png'];
   GFILES.forEach(n => { const im = new Image(); im.onload = () => { GIMG[n] = im; chunks.clear(); }; im.src = 'assets/world/' + n; });
+  // Texturas contínuas opcionais (calçamento da praça, terra e areia): ancoradas no mundo, sem emenda entre tiles.
+  const GOPT = { [T.FLOOR]: 'plaza.jpg', [T.PATH]: 'dirt.jpg', [T.SAND]: 'sand.jpg' };
+  Object.values(GOPT).forEach(n => { const im = new Image(); im.onload = () => { GIMG[n] = im; chunks.clear(); }; im.src = 'assets/world/ground/' + n + '?v=gpt1'; });
   const gReady = () => GFILES.every(n => GIMG[n]) && typeof DOMMatrix !== 'undefined';
   function pats(c) {
-    return { water: c.createPattern(GIMG['water-seamless.jpg'], 'repeat'), grass: c.createPattern(GIMG['grass-pixel.png'], 'repeat') };
+    const P = { water: c.createPattern(GIMG['water-seamless.jpg'], 'repeat'), grass: c.createPattern(GIMG['grass-pixel.png'], 'repeat') };
+    for (const t in GOPT) if (GIMG[GOPT[t]]) P[t] = c.createPattern(GIMG[GOPT[t]], 'repeat');
+    return P;
+  }
+  // escala de cada textura de 512 px (0,5 = repete a cada 8 tiles; o calçamento usa pedras maiores)
+  const GSCALE = { [T.FLOOR]: 0.2, [T.PATH]: 0.5, [T.SAND]: 0.5 };
+  const grassy = q => q === T.GRASS || q === T.FLOWER || q === T.TREE;
+  // Borda orgânica de grama por cima de terra/areia: tira o aspecto de "quadradinho" entre terrenos.
+  function grassFringe(c, x, y, dx, dy, at, P, ox, oy) {
+    const n = grassy(at(x, y - 1)), s = grassy(at(x, y + 1)), w = grassy(at(x - 1, y)), e = grassy(at(x + 1, y));
+    const nw = grassy(at(x - 1, y - 1)), ne = grassy(at(x + 1, y - 1)), sw = grassy(at(x - 1, y + 1)), se = grassy(at(x + 1, y + 1));
+    if (!(n || s || w || e || nw || ne || sw || se)) return;
+    const wx = x * 32, wy = y * 32, d = u => 5.5 + 2.6 * Math.sin(u * 0.17) + 1.6 * Math.sin(u * 0.43 + 1.3) + 0.8 * Math.sin(u * 1.1 + 0.4);
+    const path = new Path2D();
+    const edge = (side) => {
+      path.moveTo(side === 3 ? dx + 32 : dx, side === 1 ? dy + 32 : dy);
+      for (let i = 0; i <= 32; i += 1) {
+        const k = d((side < 2 ? wx : wy) + i);
+        if (side === 0) path.lineTo(dx + i, dy + k); else if (side === 1) path.lineTo(dx + i, dy + 32 - k);
+        else if (side === 2) path.lineTo(dx + k, dy + i); else path.lineTo(dx + 32 - k, dy + i);
+      }
+      if (side === 0) path.lineTo(dx + 32, dy); else if (side === 1) path.lineTo(dx + 32, dy + 32);
+      else if (side === 2) path.lineTo(dx, dy + 32); else path.lineTo(dx + 32, dy + 32);
+      path.closePath();
+    };
+    if (n) edge(0); if (s) edge(1); if (w) edge(2); if (e) edge(3);
+    const corner = (cx, cy) => { path.moveTo(cx, cy); path.arc(cx, cy, 6.5 + 2 * Math.sin(wx * 0.3 + wy * 0.7), 0, Math.PI * 2); };
+    if (nw && !n && !w) corner(dx, dy); if (ne && !n && !e) corner(dx + 32, dy);
+    if (sw && !s && !w) corner(dx, dy + 32); if (se && !s && !e) corner(dx + 32, dy + 32);
+    c.save(); c.clip(path); fillPat(c, P.grass, ox, oy, 0.25, dx, dy, 32, 32); c.restore();
   }
   function fillPat(c, pat, tx, ty, sc, dx, dy, w, h) { pat.setTransform(new DOMMatrix([sc, 0, 0, sc, tx, ty])); c.fillStyle = pat; c.fillRect(dx, dy, w, h); }
   const wob = u => 3.4 + 1.4 * Math.sin(u * 0.21) + 0.8 * Math.sin(u * 0.53 + 1.7);
@@ -464,7 +514,8 @@ const SPR = (function () {
       else if (t === T.BRIDGE) bridgeTile(c, x, y, dx, dy, at);
       else if (t === T.TREE && treeBase(x, y, at) !== T.GRASS) c.drawImage(tile(treeBase(x, y, at), hash(x, y, 9) * 4 | 0, 0), dx, dy, 32, 32);
       else if (t === T.GRASS || t === T.TREE || t === T.FLOWER) grassTile(c, t, x, y, dx, dy, ox, oy, P);
-      else c.drawImage(tile(t, hash(x, y, 9) * 4 | 0, 0), dx, dy, 32, 32);
+      else if (P[t]) { fillPat(c, P[t], ox, oy, GSCALE[t], dx, dy, 32, 32); if (t !== T.FLOOR) grassFringe(c, x, y, dx, dy, at, P, ox, oy); }
+      else { c.drawImage(tile(t, hash(x, y, 9) * 4 | 0, 0), dx, dy, 32, 32); if (t === T.PATH || t === T.SAND) grassFringe(c, x, y, dx, dy, at, P, ox, oy); }
     }
     cv.wet = wet;
     chunks.set(key, cv);

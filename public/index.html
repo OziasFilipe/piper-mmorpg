@@ -284,6 +284,12 @@ html:not(.touch) #acts #potHp{order:6}html:not(.touch) #acts #potMp{order:7}
 html:not(.touch) #cast .lbl{bottom:4px;font-size:8px;letter-spacing:.5px}
 html:not(.touch) #feed{bottom:98px}
 html.touch #acts kbd{display:none}
+/* Celular: menu numa faixa no topo, ao lado do minimapa (antes ficava no meio da tela, por cima do mapa). */
+html.touch #hudTR{flex-direction:row-reverse;align-items:flex-start;gap:8px}
+html.touch #hudTR #gold{position:absolute;right:0;top:calc(100% + 4px);padding:3px 9px 3px 5px;font-size:12px}
+html.touch #hudTR .menuBtns{gap:5px;padding:4px 6px;margin-top:2px}
+html.touch #hudTR .menuBtns .ib{width:32px;height:32px}
+html.touch #hudTR .menuBtns .ib svg{width:17px;height:17px}
 
 /* ---- Botão INSTALAR JOGO (PWA) ---- */
 #installBtn{position:absolute;top:calc(10px + env(safe-area-inset-top));right:calc(12px + env(safe-area-inset-right));z-index:60;display:none;align-items:center;gap:8px;padding:8px 16px 8px 12px;font-size:14px;animation:instPulse 2.2s ease-in-out infinite}

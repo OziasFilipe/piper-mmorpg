@@ -36,7 +36,7 @@
     { dx: -8, dy: -8, kind: 'forge' }, { dx: 5, dy: -8, kind: 'potion' },
     { dx: -8, dy: 5, kind: 'guild' }, { dx: 5, dy: 5, kind: 'travel' }
   ];
-  const townLamps = [[-3, -3], [4, -3], [-3, 4], [4, 4], [-1, -9], [2, -9], [-1, 9], [2, 9]];
+  const townLamps = [[-4, -3], [5, -3], [-4, 3], [5, 3], [-1, -9], [2, -9], [-1, 9], [2, 9]];
 
   // ======================================================== ABERTURA
   const show = (id, on) => $(id).style.display = on ? (id === 'game' || id === 'title' ? 'block' : 'flex') : 'none';
@@ -343,6 +343,16 @@
 
   // ======================================================== MAPA
   const tileAt = (x, y) => { x -= RX; return (x < 0 || y < 0 || x >= MW || y >= MH) ? T.WATER : tiles[y * MW + x]; };
+  // Chão desenhado: sob as lojas e a fonte vai calçamento (os prédios/fonte pintados cobrem por cima);
+  // antes aparecia o "bloco" de parede/água atrás das fachadas.
+  const groundAt = (x, y) => {
+    const t = tileAt(x, y), dx = x - CX, dy = y - CY;
+    if (Math.abs(dx) < 10 && Math.abs(dy) < 10) {
+      if (t === T.WATER && dx >= 0 && dx <= 1 && dy >= 0 && dy <= 1) return T.FLOOR;
+      if (t === T.WALL) return T.FLOOR;
+    }
+    return t;
+  };
   const inCave = (x, y) => REG.biome === 'green' && x > CX + 28 && y > CY + 28;
   // Carrega SÓ a região onde o jogador está (as outras não pesam no celular)
   function loadRegion(m) {
@@ -405,8 +415,8 @@
   // Resolução adaptativa: começa nítida; se o aparelho não aguenta ~50 fps, reduz um pouco a
   // resolução interna do mapa (a tela continua do mesmo tamanho). Em aparelho bom fica no máximo.
   const DPR_MAX = Math.min(window.devicePixelRatio || 1, 2);
-  const QLEVELS = [...new Set([DPR_MAX, DPR_MAX * 0.85, DPR_MAX * 0.7, 1.25, 1, 0.85].map(v => Math.round(v * 100) / 100).filter(v => v <= DPR_MAX))].sort((a, b) => b - a);
-  let qIdx = 0; try { const sv = +LS.get('piper_q'); if (sv > 0 && sv < QLEVELS.length) qIdx = sv; } catch (e) { }
+  const QLEVELS = [...new Set([DPR_MAX, DPR_MAX * 0.85, DPR_MAX * 0.7, 1.25, 1, ...(DPR_MAX >= 1.5 ? [] : [0.85])].map(v => Math.round(v * 100) / 100).filter(v => v <= DPR_MAX))].sort((a, b) => b - a);
+  let qIdx = 0; try { const sv = +LS.get('piper_q2'); if (sv > 0 && sv < QLEVELS.length) qIdx = sv; } catch (e) { }
   const perfMon = { n: 0, sum: 0, last: 0, winStart: 0, slowWin: 0, goodSince: 0, coolUntil: 0, failedUp: 0 };
   function perfFrame(now) {
     const dt = now - perfMon.last; perfMon.last = now;
@@ -420,7 +430,7 @@
     if (avg > 21 && qIdx < QLEVELS.length - 1) {          // abaixo de ~48 fps: menos pixels
       perfMon.slowWin++;
       if (perfMon.slowWin >= 2 || avg > 45) {              // muito lento: desce 2 degraus de uma vez
-        qIdx = Math.min(QLEVELS.length - 1, qIdx + (avg > 45 ? 2 : 1)); perfMon.slowWin = 0; perfMon.coolUntil = now + 1500; perfMon.goodSince = 0; LS.set('piper_q', qIdx); resize();
+        qIdx = Math.min(QLEVELS.length - 1, qIdx + (avg > 45 ? 2 : 1)); perfMon.slowWin = 0; perfMon.coolUntil = now + 1500; perfMon.goodSince = 0; LS.set('piper_q2', qIdx); resize();
       }
     } else {
       perfMon.slowWin = 0;
@@ -428,7 +438,7 @@
       else perfMon.goodSince = 0;
       // fluido por 25 s: tenta voltar um degrau de nitidez (se piorar, desce de novo e espera mais)
       if (qIdx > 0 && perfMon.goodSince && now - perfMon.goodSince > 25000 && now > perfMon.failedUp) {
-        qIdx--; perfMon.goodSince = 0; perfMon.coolUntil = now + 2500; perfMon.failedUp = now + 120000; LS.set('piper_q', qIdx); resize();
+        qIdx--; perfMon.goodSince = 0; perfMon.coolUntil = now + 2500; perfMon.failedUp = now + 120000; LS.set('piper_q2', qIdx); resize();
       }
     }
   }
@@ -472,7 +482,7 @@
     ctx.setTransform(K, 0, 0, K, 0, 0); ctx.imageSmoothingEnabled = false;
     const x0 = Math.floor(camX) - 1, y0 = Math.floor(camY) - 1, x1 = x0 + Math.ceil(LWW / TS) + 2, y1 = y0 + Math.ceil(LHH / TS) + 3;
     const wf = Math.floor(now / 350) % 7;
-    SPR.drawGround(ctx, x0, y0, x1, y1, ox, oy, now, tileAt, K);
+    SPR.drawGround(ctx, x0, y0, x1, y1, ox, oy, now, groundAt, K);
     for (const pt of D.portalsOf(REG.id)) { const wx = RX + pt.x; if (wx >= x0 - 2 && wx <= x1 + 2 && pt.y >= y0 - 3 && pt.y <= y1 + 3) drawPortal(pt, wx, now, ox, oy); }
     for (const f of fxs) {
       const age = now - f.t0, sx = f.x * TS + ox, sy = f.y * TS + oy;
@@ -496,9 +506,6 @@
       }
       if (y === CY + 1) {
         const fountain = SPR.townFountain(), fh = Math.round(fountain.height * 64 / fountain.width);
-        // A fonte nova tem cantos vazados: piso de pedra por baixo, no lugar da água dos 2x2 tiles.
-        if (fountain.naturalWidth) for (let dy = 0; dy < 2; dy++) for (let dx = 0; dx < 2; dx++)
-          ctx.drawImage(SPR.tile(T.FLOOR, (dx + dy * 3) % 4, 0), (CX + dx) * TS + ox, (CY + dy) * TS + oy, TS, TS);
         ctx.drawImage(fountain, CX * TS + ox, CY * TS + oy + 64 - fh, 64, fh);
       }
       // Lampiões em volta da praça (só decoração).
@@ -538,7 +545,7 @@
     ctx.textAlign = 'center';
     for (const e of ents.values()) {
       const p = rpos(e, now), sx = p.x * TS + ox + 16, isC = e.kind === 'p' || (typeof e.look === 'string' && e.look[0] === 'c');
-      const top = isC ? (mobileMode ? 34 : 24) : (e.look === 'dragon' || e.look === 'troll' || e.look === 'bear' ? (mobileMode ? 22 : 14) : (mobileMode ? 12 : 4));
+      const top = isC ? (mobileMode ? 22 : 15) : (e.look === 'dragon' || e.look === 'troll' || e.look === 'bear' ? (mobileMode ? 22 : 14) : (mobileMode ? 12 : 4));
       const sy = p.y * TS + oy - top;
       const pct = e.hp / 100, hc = pct > 0.6 ? '#3fd35a' : pct > 0.3 ? '#f2c14e' : '#ef4444';
       const nc = e.kind === 'n' ? '#9fd8ff' : e.kind === 'p' ? ((e.flags & 1) ? '#ff6b6b' : e.id !== myId && isFriend(e.name) ? '#5cf08a' : '#ffffff') : hc;
@@ -642,6 +649,7 @@
       ctx.save(); ctx.translate(dir[0] * attackStep, dir[1] * attackStep * .45);
       ctx.imageSmoothingEnabled = false;
       if (hurt) ctx.globalAlpha = 0.6;
+      ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
       // As folhas novas têm os pés na linha 185/192. A linha do solo é 31,
       // igual aos monstros: antes em 29, o herói parecia levitar.
       const squash = 0;   // sem esticar/achatar: o personagem tem sempre o mesmo tamanho
@@ -651,7 +659,7 @@
       ctx.restore(); ctx.imageSmoothingEnabled = false;
       return;
     }
-    const enemySprite = e.kind === 'm' && ENEMIES.sprite(e.look, frame, e.dir === 1);
+    const enemySprite = e.kind === 'm' && ENEMIES.sprite(e.look, frame, !!e.faceLeft);
     const img = enemySprite || SPR.entity(e.kind, e.look, e.dir, frame, e.faceLeft);
     const elite = e.look === 'bear' || e.look === 'troll' || e.look === 'dragon';
     const scale = mobileMode ? 1.15 : 1;
@@ -664,7 +672,7 @@
     ctx.fillStyle = 'rgba(0,0,0,.28)'; ctx.beginPath(); ctx.ellipse(sx + 16, sy + 29, iw > 40 ? 16 : 10, 4, 0, 0, 7); ctx.fill();
     ctx.save(); ctx.translate(dir[0] * attackStep, dir[1] * attackStep * .45);
     if ((e.hitUntil || 0) > now) ctx.globalAlpha = 0.6;
-    ctx.imageSmoothingEnabled = false;
+    ctx.imageSmoothingEnabled = !!enemySprite; ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(img, Math.round((sx + (TS - iw) / 2) * K) / K, Math.round((sy + TS - ih - 1 + idleBob) * K) / K, iw, ih);
     ctx.restore();
     ctx.imageSmoothingEnabled = false;

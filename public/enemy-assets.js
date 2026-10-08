@@ -3,7 +3,9 @@
 const ENEMIES = (() => {
   const names = ['rabbit', 'rat', 'snake', 'wolf', 'goblin', 'bear', 'orc', 'shaman', 'troll', 'scorpion', 'mummy', 'skeleton', 'spider', 'dragon'];
   const images = {};
-  const ASSET_REV = 'motion-pixel-5';
+  const ASSET_REV = 'gpt-anim-1';
+  // Folhas novas (ChatGPT): quadros já alinhados na produção, incluindo o pulo no ar — desenho direto.
+  const READY = new Set(['rabbit', 'rat', 'snake', 'wolf']);
   function load(onProgress) {
     let done = 0;
     return Promise.all(names.map(name => new Promise(resolve => {
@@ -38,7 +40,7 @@ const ENEMIES = (() => {
     if (faceLeft) { g.translate(F, 0); g.scale(-1, 1); }
     const ref = refBox(name, sheet, F), raw = document.createElement('canvas'); raw.width = F; raw.height = F;
     raw.getContext('2d').drawImage(sheet, step * F, 0, F, F, 0, 0, F, F);
-    const b = ref && box(raw);
+    const b = !READY.has(name) && ref && box(raw);
     if (b) {   // mesma altura (±6%) e pés na mesma linha do quadro parado
       const s = Math.max(0.94, Math.min(1.06, ref.h / b.h));
       g.drawImage(raw, 0, 0, F, F, ref.cx - s * b.cx, ref.y1 + 1 - s * (b.y1 + 1), F * s, F * s);
