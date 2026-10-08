@@ -3,7 +3,7 @@
 const ENEMIES = (() => {
   const names = ['rabbit', 'rat', 'snake', 'wolf', 'goblin', 'bear', 'orc', 'shaman', 'troll', 'scorpion', 'mummy', 'skeleton', 'spider', 'dragon'];
   const images = {};
-  const ASSET_REV = 'motion-pixel-3';
+  const ASSET_REV = 'motion-pixel-4';
   function load(onProgress) {
     let done = 0;
     return Promise.all(names.map(name => new Promise(resolve => {
@@ -16,7 +16,8 @@ const ENEMIES = (() => {
   const cache = new Map();
   function sprite(name, frame = 0) {
     const sheet = images[name]; if (!sheet) return null;
-    const step = Math.max(0, Math.min(4, frame | 0));
+    const frames = Math.max(1, Math.floor(sheet.width / sheet.height));
+    const step = Math.max(0, Math.min(frames - 1, frame | 0));
     const key = `${name}:${step}`;
     if (cache.has(key)) return cache.get(key);
     const F = sheet.height;   // tamanho do quadro = altura da folha (folhas reduzidas para carregar rápido)

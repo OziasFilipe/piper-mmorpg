@@ -1,7 +1,7 @@
 // Personagens em camadas (paper doll) a partir das folhas PNG geradas — As Aventuras do Piper
 const CHARS = (function () {
   const D = DEFS, SHEETS = {}, cache = new Map();
-  const ASSET_REV = 'motion-pixel-3';
+  const ASSET_REV = 'motion-pixel-4';
   let CW = 128, CH = 192, ready = false;
 
   async function load(onProgress) {
@@ -52,8 +52,12 @@ const CHARS = (function () {
     else if (armor === 'n_green') body = 'body_npc_healer';
     else if (armor === 'n_white' || voc === 'npc') body = 'body_npc_sage';
     const direct = SHEETS[body];
-    if (direct && direct.width === CW * 3 && direct.height === CH * 4) {
-      g.drawImage(direct, frame * CW, dir * CH, CW, CH, 0, 0, CW, CH);
+    const cols = direct ? Math.floor(direct.width / CW) : 0;
+    if (direct && cols >= 3 && direct.height === CH * 4) {
+      // Folhas atuais têm oito poses; folhas antigas de três colunas seguem
+      // compatíveis enquanto os recursos atualizam no navegador.
+      const frameIndex = cols >= 8 ? Math.max(0, Math.min(7, frame | 0)) : ((frame | 0) % cols + cols) % cols;
+      g.drawImage(direct, frameIndex * CW, dir * CH, CW, CH, 0, 0, CW, CH);
       if (ready) cache.set(key, c);
       return c;
     }

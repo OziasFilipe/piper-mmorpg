@@ -356,8 +356,8 @@
     const attackLeft = Math.max(0, (e.attackUntil || 0) - now);
     let frame = 0;
     const attackPhase = attackLeft ? 1 - Math.min(1, attackLeft / 300) : 0;
-    if (attackLeft) frame = e.kind === 'm' ? (attackPhase < .42 ? 3 : 4) : (attackPhase < .28 ? 0 : 2);
-    else if (p.moving) frame = 1 + (Math.floor(now / (e.kind === 'm' ? 110 : 92) + e.id * 1.7) % 2);
+    if (attackLeft) frame = attackPhase < .26 ? 5 : attackPhase < .62 ? 6 : 7;
+    else if (p.moving) frame = 1 + (Math.floor(now / (e.kind === 'm' ? 72 : 76) + e.id * 1.7) % 4);
     else if (e.kind === 'm' && Math.floor(now / 440 + e.id) % 5 === 0) frame = 1;
     const attackStep = attackLeft ? Math.sin((1 - attackLeft / 300) * Math.PI) * (e.kind === 'p' ? 5.8 : 4.5) : 0;
     const dir = [[0, 1], [-1, 0], [0, -1], [1, 0]][e.dir] || [0, 0];
@@ -367,20 +367,22 @@
       : ['c', isPlayer && e.id === myId && me.voc === 'wizard' ? 'wizard' : 'warrior', '', '', '', '', '0', 'curto', 'castanho', ''].join('|');
     if (isPlayer || (typeof e.look === 'string' && e.look[0] === 'c')) {
       const scale = mobileMode ? 1.2 : 1;
-      const stepWave = p.moving ? Math.sin(now / 86 + e.id * 1.7) : 0;
-      const lift = p.moving ? Math.max(0, Math.cos(now / 86 + e.id * 1.7)) * 1.15 : 0;
-      const stride = p.moving ? stepWave * 1.65 - lift : Math.sin(now / 420 + e.id) * .55;
+      const stepWave = p.moving ? Math.sin(now / 76 + e.id * 1.7) : 0;
       const shadowW = p.moving ? 9 + Math.abs(stepWave) * 2.2 : 10;
       ctx.fillStyle = 'rgba(0,0,0,.32)'; ctx.beginPath(); ctx.ellipse(sx + 16, sy + 28.7, shadowW * scale, (3.2 + Math.abs(stepWave) * .6) * scale, 0, 0, 7); ctx.fill();
       if (e.flags & 2) { ctx.fillStyle = 'rgba(255,80,20,.28)'; ctx.beginPath(); ctx.ellipse(sx + 16, sy + 22, 17, 12, 0, 0, 7); ctx.fill(); }
       const img = CHARS.sprite(characterLook, e.dir, frame);
-      const sway = p.moving ? stepWave * .7 : Math.sin(now / 650 + e.id * 1.7) * .35;
+      const sway = p.moving ? stepWave * .55 : Math.sin(now / 650 + e.id * 1.7) * .35;
       const hurt = (e.hitUntil || 0) > now;
       ctx.save(); ctx.translate(dir[0] * attackStep, dir[1] * attackStep * .45);
       ctx.imageSmoothingEnabled = false;
       if (hurt) ctx.globalAlpha = 0.6;
-      const charW = 42 * scale, charH = 63 * scale;
-      ctx.drawImage(img, sx + 16 - charW / 2 + sway, sy + TS - charH + stride, charW, charH - Math.max(0, stride * .22));
+      // As folhas novas têm os pés na linha 185/192. Mantemos essa linha
+      // exatamente no chão do tile, inclusive nas poses de corrida/ataque.
+      const squash = p.moving ? Math.abs(stepWave) * .018 : 0;
+      const charW = 42 * scale * (1 + squash), charH = 63 * scale * (1 - squash);
+      const groundY = sy + 29, footRatio = 185 / 192;
+      ctx.drawImage(img, sx + 16 - charW / 2 + sway, groundY - charH * footRatio, charW, charH);
       ctx.restore(); ctx.imageSmoothingEnabled = false;
       return;
     }
