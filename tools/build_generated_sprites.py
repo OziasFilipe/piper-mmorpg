@@ -48,31 +48,30 @@ ENEMY_FRAMES = 8
 def write_character_motion(rows, destination):
     """Cria 12 poses ancoradas: repouso, oito passadas e ataque completo."""
     output = Image.new('RGBA', (128 * CHARACTER_FRAMES, 768), (0, 0, 0, 0))
-    # repouso; oito passadas que fecham um ciclo contínuo; preparar, golpear,
-    # recuperar. Todas conservam a mesma sola para não flutuar no tile.
+    # Repouso, oito passadas e ataque. A arte de origem contém três desenhos
+    # conceitualmente diferentes por direção (não uma sequência de poses);
+    # misturá-los fazia armadura/cabelo trocarem no meio da caminhada. Todas as
+    # poses partem agora da mesma silhueta base de cada direção.
     poses = (
         (0, 1.00, 1.00, 0, 0, 0),
-        (1, 0.98, 1.02, -3, 0, 0.8),
-        (1, 0.96, 1.04, -4, 0, 1.5),
-        (2, 0.99, 1.01, -1, 0, 0.6),
-        (2, 1.02, 0.98, 3, 0, -0.8),
-        (2, 1.04, 0.96, 4, 0, -1.6),
-        (1, 1.02, 0.98, 2, 0, -0.8),
-        (1, 0.99, 1.01, -1, 0, 0.3),
+        (0, 1.00, 1.00, -3, 0, 0.8),
+        (0, 1.00, 1.00, -4, 0, 1.5),
+        (0, 1.00, 1.00, -1, 0, 0.6),
+        (0, 1.00, 1.00, 3, 0, -0.8),
+        (0, 1.00, 1.00, 4, 0, -1.6),
+        (0, 1.00, 1.00, 2, 0, -0.8),
+        (0, 1.00, 1.00, -1, 0, 0.3),
         (0, 1.00, 1.00, 0, 0, 0),
-        (0, 0.94, 1.05, -5, 0, 3.0),
-        (0, 1.10, 0.92, 8, 0, -5.0),
-        (0, 1.02, 0.98, 3, 0, -1.5),
+        (0, 1.00, 1.00, -5, 0, 3.0),
+        (0, 1.00, 1.00, 8, 0, -5.0),
+        (0, 1.00, 1.00, 3, 0, -1.5),
     )
-    # deslocamento alternado das duas pernas durante a caminhada. O valor é
-    # aplicado abaixo do joelho, para que a passada pareça dobrar a perna em
-    # vez de simplesmente deslizar o personagem inteiro.
-    gait = (0, -2, -5, -3, 0, 3, 5, 2, 0)
     for row, cells in enumerate(rows):
         for frame, (source, sx, sy, dx, dy, angle) in enumerate(poses):
             pose = motion_pose(cells[source], sx, sy, dx, dy, angle, 128, 192, 185)
-            if 1 <= frame <= 8:
-                pose = stride_legs(pose, gait[frame], 185)
+            # A oscilação do corpo já dá leitura de passada. O recorte de
+            # pernas só é seguro quando a arte vem em camadas; nesta folha ele
+            # cortava capas e armas em alguns ângulos, então não é aplicado.
             output.alpha_composite(pose, (frame * 128, row * 192))
     output.save(destination, optimize=True)
 
@@ -105,46 +104,6 @@ def export_main_action_sheets():
                     cell = sheet.crop(((start + index) * 128, row * 192, (start + index + 1) * 128, (row + 1) * 192))
                     output.alpha_composite(cell, (index * 128, row * 192))
             output.save(target / f'{action}.png', optimize=True)
-
-
-def stride_legs(frame, stride, ground):
-    """Alterna os dois pés sob o joelho sem quebrar a base no chão.
-
-    As folhas recebidas não possuem camadas de perna separadas. Trabalhamos
-    apenas a faixa inferior dos dois lados, girando-a em torno do joelho e
-    recolocando cada bota na linha do chão. Em escala de jogo isso dá a
-    leitura de joelho dobrando, passada e apoio, sem halos translúcidos.
-    """
-    alpha = frame.getchannel('A')
-    box = alpha.getbbox()
-    if not box or not stride:
-        return frame
-    knee = max(box[1] + int((box[3] - box[1]) * .62), ground - 34)
-    mid = frame.width // 2
-    # A pequena sobreposição no centro cobre pernas que se cruzam na visão
-    # frontal, enquanto os extremos mantêm braços, arma e escudo intactos.
-    leg_boxes = ((max(0, mid - 42), knee, mid + 5, ground + 1, -1),
-                 (mid - 5, knee, min(frame.width, mid + 42), ground + 1, 1))
-    out = frame.copy()
-    for x0, y0, x1, y1, side in leg_boxes:
-        part = frame.crop((x0, y0, x1, y1))
-        part_alpha = part.getchannel('A')
-        if not part_alpha.getbbox():
-            continue
-        # Apaga somente pixels opacos da perna original; transparência do
-        # recorte não afeta o corpo, capa ou cenário atrás do sprite.
-        out.paste((0, 0, 0, 0), (x0, y0, x1, y1), part_alpha)
-        leg = part.rotate(side * stride * 1.05, resample=Image.Resampling.NEAREST,
-                          center=(part.width // 2, 1), translate=(side * stride, 0))
-        leg_box = leg.getchannel('A').getbbox()
-        if not leg_box:
-            continue
-        # A bota sempre termina no chão; assim o passo não vira levitação.
-        dy = ground - (y0 + leg_box[3])
-        out.alpha_composite(leg, (x0, y0 + dy))
-    return out
-
-
 def normalize_npc_sheet(source, destination, target_height=111):
     """Iguala a silhueta dos NPCs à altura visual do personagem principal."""
     image = Image.open(source).convert('RGBA')
