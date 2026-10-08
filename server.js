@@ -468,7 +468,7 @@ function playerTick(p, now) {
     }
   }
   // segurança: se o celular parar de mandar "andar", o personagem para sozinho
-  if (p.walkDir >= 0 && now - (p.walkAt || 0) > 900) p.walkDir = -1;
+  if (p.walkDir >= 0 && now - (p.walkAt || 0) > 1500) p.walkDir = -1;   // 1,5 s: tolera oscilação da internet móvel
   if (now >= p.nextMove) {
     if (p.walkDir >= 0) {
       p.path = null;
@@ -743,7 +743,25 @@ function tick() {
     p.fx = [];
   }
 }
-setInterval(() => { try { tick(); } catch (e) { console.error('tick', e); } }, TICK);
+// Loop do jogo com medição: a cada minuto mostra no log do Render quanto tempo cada tick levou.
+const perf = { n: 0, sum: 0, max: 0, late: 0 }; let lastTickAt = Date.now();
+setInterval(() => {
+  const t0 = Date.now(); if (t0 - lastTickAt > TICK * 2) perf.late++; lastTickAt = t0;
+  try { tick(); } catch (e) { console.error('tick', e); }
+  const dt = Date.now() - t0; perf.n++; perf.sum += dt; if (dt > perf.max) perf.max = dt;
+}, TICK);
+setInterval(() => {
+  if (players.size) console.log(`[desempenho] jogadores=${players.size} tick médio=${(perf.sum / (perf.n || 1)).toFixed(1)}ms máx=${perf.max}ms atrasos=${perf.late} memória=${(process.memoryUsage().rss / 1048576).toFixed(0)}MB`);
+  perf.n = perf.sum = perf.max = perf.late = 0;
+}, 60000);
+// Render (plano free) desliga o servidor após 15 min sem acesso, e o próximo jogador espera ~1 min.
+// O servidor acessa o próprio endereço a cada 10 min para continuar acordado.
+// Para desligar: variável KEEP_AWAKE=0 no Render.
+if (process.env.RENDER_EXTERNAL_URL && process.env.KEEP_AWAKE !== '0') {
+  const https = require('https'), url = process.env.RENDER_EXTERNAL_URL.replace(/\/$/, '') + '/health';
+  setInterval(() => { https.get(url, r => r.resume()).on('error', () => { }); }, 10 * 60 * 1000);
+  console.log('Mantendo o servidor acordado: ' + url);
+}
 process.on('uncaughtException', e => console.error('erro não tratado (servidor continua):', e));
 process.on('unhandledRejection', e => console.error('promessa rejeitada:', e));
 

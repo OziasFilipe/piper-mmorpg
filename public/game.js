@@ -171,8 +171,12 @@
   }
 
   // ======================================================== ESTADO
+  // O servidor anda em "ticks" de 100 ms: um passo de 258 ms na prática acontece a cada 300 ms.
+  // Animar exatamente nesse ritmo deixa o movimento contínuo, sem parar e arrancar a cada quadrado.
+  const SRV_TICK = 100, cadence = ms => Math.ceil(ms / SRV_TICK) * SRV_TICK;
   function moveDur(e) {
-    if (e.kind === 'p') return Math.max(150, 260 - (e.lv || 1) * 2);
+    // +40 ms de folga: se o próximo passo chegar um pouco atrasado pela internet, ele ainda está andando (não para).
+    if (e.kind === 'p') return cadence(Math.max(150, 260 - (e.lv || 1) * 2)) + 40;
     if (e.kind === 'm' && D.MON[e.look]) return Math.min(450, D.MON[e.look].spd * 0.6);
     return 250;
   }
@@ -222,9 +226,8 @@
   }
   function rpos(e, now) {
     const raw = e.t0 ? Math.min(1, (now - e.t0) / e.dur) : 1;
-    // Entrada e saída suaves em cada quadrado: tira o aspecto mecânico sem
-    // mudar a posição recebida do servidor.
-    const k = raw * raw * (3 - 2 * raw);
+    // Velocidade constante (linear): andando sem parar, um quadrado emenda no outro sem "tranco".
+    const k = raw;
     return { x: e.fx + (e.x - e.fx) * k, y: e.fy + (e.y - e.fy) * k, moving: raw < 1, progress: raw };
   }
 
@@ -269,19 +272,17 @@
     const now = performance.now();
     const meE = ents.get(myId); if (!meE) return;
     const mp = rpos(meE, now);
-    // A câmera antecipa levemente o próximo passo e depois o acompanha com
-    // amortecimento, evitando a sensação de "puxão" a cada pacote de rede.
-    const stepX = mp.moving ? (meE.x - meE.fx) * 0.13 : 0, stepY = mp.moving ? (meE.y - meE.fy) * 0.10 : 0;
-    const targetX = mp.x + 0.5 + stepX - LWW / TS / 2, targetY = mp.y + 0.2 + stepY - LHH / TS / 2;
-    const dt = Math.min(45, Math.max(1, now - (cam.t || now)));
-    if (cam.x == null || Math.hypot(targetX - cam.x, targetY - cam.y) > 5) { cam.x = targetX; cam.y = targetY; }
+    // Câmera presa ao personagem: como ele anda em velocidade constante, a tela desliza junto,
+    // sem atraso nem "puxão". Só uma suavização mínima para absorver pequenas correções da rede.
+    const targetX = mp.x + 0.5 - LWW / TS / 2, targetY = mp.y + 0.2 - LHH / TS / 2;
+    if (cam.x == null || Math.abs(targetX - cam.x) > 2 || Math.abs(targetY - cam.y) > 2) { cam.x = targetX; cam.y = targetY; }
     else {
-      const follow = 1 - Math.exp(-dt / 82);
+      const dt = Math.min(50, Math.max(1, now - (cam.t || now))), follow = 1 - Math.exp(-dt / 18);
       cam.x += (targetX - cam.x) * follow; cam.y += (targetY - cam.y) * follow;
     }
     cam.t = now;
     const camX = cam.x, camY = cam.y;
-    const ox = Math.round(-camX * TS * K * 2) / (K * 2), oy = Math.round(-camY * TS * K * 2) / (K * 2); cam.ox = ox; cam.oy = oy;
+    const ox = Math.round(-camX * TS * K) / K, oy = Math.round(-camY * TS * K) / K;   // pixel inteiro do aparelho: sem tremido cam.ox = ox; cam.oy = oy;
     ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = '#000'; ctx.fillRect(0, 0, cv.width, cv.height);
     ctx.setTransform(K, 0, 0, K, 0, 0); ctx.imageSmoothingEnabled = false;
     const x0 = Math.floor(camX) - 1, y0 = Math.floor(camY) - 1, x1 = x0 + Math.ceil(LWW / TS) + 2, y1 = y0 + Math.ceil(LHH / TS) + 3;
@@ -694,36 +695,57 @@
   $('chatIn').addEventListener('keydown', e => { if (e.key === 'Enter') { const v = $('chatIn').value.trim(); if (v) send({ t: 'chat', m: v }); $('chatIn').value = ''; } e.stopPropagation(); });
 
   // ======================================================== CONTROLES
-  // joystick
-  const joy = $('joy'), knob = $('knob'); let joyId = null, joyDir = -1;
+  // joystick — controle robusto para qualquer celular:
+  //  • funciona com Pointer Events e, em navegadores antigos, com Touch Events;
+  //  • o canto inferior esquerdo inteiro serve para andar (não precisa acertar o círculo);
+  //  • o visual do joystick continua o mesmo.
+  const joy = $('joy'), knob = $('knob'); let joyId = null, joyDir = -1, joyAX = 0, joyAY = 0;
   function setWalk(d) { if (d !== joyDir) { joyDir = d; send({ t: 'walk', d }); } }
-  setInterval(() => { if (joyDir >= 0 && inGame) send({ t: 'walk', d: joyDir }); }, 300);
-  // Alguns navegadores móveis perdem a captura do ponteiro no primeiro arrasto.
-  // O controle continua funcionando sem captura e também recebe o toque inicial.
-  joy.addEventListener('pointerdown', e => {
-    e.preventDefault(); joyId = e.pointerId;
-    try { joy.setPointerCapture(e.pointerId); } catch (_) { }
-    joyMove(e.clientX, e.clientY);
-  });
-  joy.addEventListener('pointermove', e => { if (e.pointerId === joyId) { e.preventDefault(); joyMove(e.clientX, e.clientY); } });
-  const joyEnd = e => { if (joyId !== null && e.pointerId !== joyId) return; joyId = null; knob.style.transform = ''; setWalk(-1); };
-  joy.addEventListener('pointerup', joyEnd); joy.addEventListener('pointercancel', joyEnd);
-  // Fallback para navegadores móveis antigos: não depende de Pointer Events.
-  const touchPoint = e => e.touches[0] || e.changedTouches[0];
-  joy.addEventListener('touchstart', e => { const t = touchPoint(e); if (t) { e.preventDefault(); joyMove(t.clientX, t.clientY); } }, { passive: false });
-  joy.addEventListener('touchmove', e => { const t = touchPoint(e); if (t) { e.preventDefault(); joyMove(t.clientX, t.clientY); } }, { passive: false });
-  joy.addEventListener('touchend', e => { e.preventDefault(); joyId = null; knob.style.transform = ''; setWalk(-1); }, { passive: false });
-  joy.addEventListener('touchcancel', e => { e.preventDefault(); joyId = null; knob.style.transform = ''; setWalk(-1); }, { passive: false });
-  // Caso a página interrompa a captura ao mudar de foco, nunca deixa o personagem preso andando.
-  document.addEventListener('pointerup', joyEnd, true);
-  document.addEventListener('pointercancel', joyEnd, true);
-  function joyMove(clientX, clientY) {
-    const r = joy.getBoundingClientRect(), dx = clientX - (r.left + r.width / 2), dy = clientY - (r.top + r.height / 2);
-    const d = Math.hypot(dx, dy), m = Math.min(d, 42);
+  setInterval(() => { if (joyDir >= 0 && inGame) send({ t: 'walk', d: joyDir }); }, 250);
+  function joyRect() { const r = joy.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2, r: r.width / 2 }; }
+  function inZone(x, y) {
+    if (!inGame || joy.offsetParent === null) return false;
+    if (document.querySelector('.modal[style*="flex"]')) return false;
+    const j = joyRect();
+    if (Math.hypot(x - j.x, y - j.y) <= j.r + 30) return true;               // no joystick (com folga)
+    if (x > innerWidth * 0.38 || y < innerHeight * 0.38) return false;          // fora do canto inferior esquerdo
+    const el = document.elementFromPoint(x, y);
+    return !el || el === cv || el === joy || joy.contains(el);                  // só sobre o mapa, nunca sobre botões
+  }
+  function joyStart(id, x, y) {
+    joyId = id; const j = joyRect();
+    // tocou no círculo: centro é o do joystick; tocou fora: o ponto do toque vira o centro
+    if (Math.hypot(x - j.x, y - j.y) <= j.r + 30) { joyAX = j.x; joyAY = j.y; } else { joyAX = x; joyAY = y; }
+    joyMove(x, y);
+  }
+  function joyEnd() { joyId = null; knob.style.transform = ''; setWalk(-1); }
+  function joyMove(x, y) {
+    const dx = x - joyAX, dy = y - joyAY, d = Math.hypot(dx, dy), m = Math.min(d, 42);
     knob.style.transform = `translate(${dx / (d || 1) * m}px,${dy / (d || 1) * m}px)`;
-    if (d < 14) return setWalk(-1);
+    if (d < 12) return setWalk(-1);
     setWalk(Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 3 : 1) : (dy > 0 ? 0 : 2));
   }
+  if (window.PointerEvent) {
+    document.addEventListener('pointerdown', e => {
+      if (joyId !== null || (e.pointerType === 'mouse' && !joy.contains(e.target))) return;
+      if (!inZone(e.clientX, e.clientY)) return;
+      e.preventDefault(); e.stopPropagation(); joyStart('p' + e.pointerId, e.clientX, e.clientY);
+    }, true);
+    document.addEventListener('pointermove', e => { if (joyId === 'p' + e.pointerId) { e.preventDefault(); joyMove(e.clientX, e.clientY); } }, { capture: true, passive: false });
+    const up = e => { if (joyId === 'p' + e.pointerId) joyEnd(); };
+    document.addEventListener('pointerup', up, true); document.addEventListener('pointercancel', up, true);
+  } else {
+    const find = (list, id) => { for (const t of list) if ('t' + t.identifier === id) return t; return null; };
+    document.addEventListener('touchstart', e => {
+      if (joyId !== null) return; const t = e.changedTouches[0]; if (!t || !inZone(t.clientX, t.clientY)) return;
+      e.preventDefault(); joyStart('t' + t.identifier, t.clientX, t.clientY);
+    }, { capture: true, passive: false });
+    document.addEventListener('touchmove', e => { const t = joyId && find(e.changedTouches, joyId); if (t) { e.preventDefault(); joyMove(t.clientX, t.clientY); } }, { capture: true, passive: false });
+    const tend = e => { if (joyId && find(e.changedTouches, joyId)) joyEnd(); };
+    document.addEventListener('touchend', tend, true); document.addEventListener('touchcancel', tend, true);
+  }
+  // se o app perder o foco (ligação, notificação, trocar de app), o personagem para
+  document.addEventListener('visibilitychange', () => { if (document.hidden) joyEnd(); });
   // teclado (PC)
   const KD = { ArrowDown: 0, s: 0, S: 0, ArrowLeft: 1, a: 1, A: 1, ArrowUp: 2, w: 2, W: 2, ArrowRight: 3, d: 3, D: 3 };
   const held = [];

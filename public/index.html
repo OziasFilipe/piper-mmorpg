@@ -6,6 +6,9 @@
 <meta name="theme-color" content="#0e1234">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<script>(function(){var d=document.documentElement,on=function(){d.classList.add('touch')};
+try{if(('ontouchstart' in window)||navigator.maxTouchPoints>0||(window.matchMedia&&matchMedia('(any-pointer:coarse)').matches))on();}catch(e){}
+window.addEventListener('touchstart',on,{once:true,passive:true});window.addEventListener('pointerdown',function(e){if(e.pointerType!=='mouse')on();},true);})();</script>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="assets/ui/icon-192.png">
 <title>As Aventuras do Piper</title>
@@ -268,10 +271,10 @@ label.lb{display:block;font-size:12px;color:var(--dim);margin:8px 0 3px;text-tra
   .ib{width:34px;height:34px}.ib svg{width:18px;height:18px}
 }
 /* Computador usa teclado e clique; joystick e atalhos de toque ficam só em tela tátil. */
-@media (hover:hover) and (pointer:fine){
-  #joy,#acts{display:none!important}
-  #feed{bottom:20px}
-}
+/* Joystick e botões de toque aparecem em QUALQUER aparelho com tela de toque (classe "touch" no <html>).
+   Só somem num computador sem tela de toque, que usa teclado e mouse. */
+html:not(.touch) #joy,html:not(.touch) #acts{display:none!important}
+html:not(.touch) #feed{bottom:20px}
 
 /* ---- Botão INSTALAR JOGO (PWA) ---- */
 #installBtn{position:absolute;top:calc(10px + env(safe-area-inset-top));right:calc(12px + env(safe-area-inset-right));z-index:60;display:none;align-items:center;gap:8px;padding:8px 16px 8px 12px;font-size:14px;animation:instPulse 2.2s ease-in-out infinite}

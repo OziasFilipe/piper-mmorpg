@@ -21,6 +21,10 @@ services:
         value: production
       - key: XP_RATE
         value: "2"
+      # O servidor acessa o próprio /health a cada 10 min para não dormir (plano free).
+      # Use "0" para desligar (ex.: se tiver outros serviços free e as 750 h/mês ficarem curtas).
+      - key: KEEP_AWAKE
+        value: "1"
       # ---- Para NÃO perder os personagens a cada deploy (somente plano starter) ----
       # 1) troque plan: free por plan: starter
       # 2) descomente as 2 linhas abaixo e o bloco "disk"
