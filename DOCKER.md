@@ -59,7 +59,10 @@ git pull
 docker compose up -d --build
 ```
 
-Os personagens **não são apagados**: ficam no volume `piper-dados`, fora da imagem.
+Os personagens **não são apagados**: ficam no banco SQLite dentro do volume `piper-dados`, fora da imagem.
+O servidor ainda faz uma **cópia de segurança automática** (em `/data/backups` dentro do volume) toda vez que liga e uma vez por dia, guardando as 14 mais novas.
+
+⚠️ Nunca use `docker compose down -v` — o `-v` apaga os volumes (e os personagens). Para parar: `docker compose down` (sem `-v`).
 
 ## 4. Backup dos personagens
 

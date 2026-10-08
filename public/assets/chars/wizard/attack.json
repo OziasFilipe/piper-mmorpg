@@ -1,0 +1,9 @@
+{
+  "action": "attack",
+  "sheet": "attack.png",
+  "cell": [128, 192],
+  "frames": 3,
+  "fps": 10,
+  "loop": false,
+  "ground": 185
+}

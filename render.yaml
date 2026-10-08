@@ -33,6 +33,11 @@ services:
       # 2) descomente as 2 linhas abaixo e o bloco "disk"
       # - key: DATA_DIR
       #   value: /var/data
+      # ---- Ou: banco SQLite na nuvem (Turso), que funciona até no plano free e não perde nada a cada deploy ----
+      # - key: TURSO_DATABASE_URL
+      #   sync: false
+      # - key: TURSO_AUTH_TOKEN
+      #   sync: false
     # disk:
     #   name: dados-jogadores
     #   mountPath: /var/data

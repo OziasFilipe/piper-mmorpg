@@ -137,6 +137,11 @@ const occ = new Map();
 const players = new Map(); // id -> player
 const cheb = (a, b) => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
 const DX = [0, -1, 0, 1], DY = [1, 0, -1, 0]; // 0 baixo,1 esquerda,2 cima,3 direita
+// Limites explícitos impedem que uma concentração de jogadores transforme uma
+// única tela em milhares de entidades/partículas e congele todos os clientes.
+const VIEW_ENTITY_LIMIT = Math.max(40, +process.env.VIEW_ENTITY_LIMIT || 96);
+const FX_QUEUE_LIMIT = Math.max(24, +process.env.FX_QUEUE_LIMIT || 80);
+const SOCKET_BACKLOG_LIMIT = Math.max(65536, +process.env.SOCKET_BACKLOG_LIMIT || 512 * 1024);
 
 // Grade espacial: cada célula de 16x16 tiles guarda as entidades dentro dela.
 // Assim o servidor só olha o que está perto de cada jogador (bem mais leve).
@@ -267,10 +272,25 @@ function newPlayer(name, voc, pw, app) {
   return p;
 }
 
-function send(p, o) { if (p.ws && p.ws.readyState === 1) p.ws.send(JSON.stringify(o)); }
+function send(p, o, dropIfCongested = false) {
+  if (!p.ws || p.ws.readyState !== 1) return false;
+  if (dropIfCongested && p.ws.bufferedAmount > SOCKET_BACKLOG_LIMIT) return false;
+  p.ws.send(JSON.stringify(o)); return true;
+}
 function msg(p, m, c) { send(p, { t: 'msg', m, c: c || '#fff' }); }
 function broadcast(o) { const s = JSON.stringify(o); for (const p of players.values()) if (p.ws.readyState === 1) p.ws.send(s); }
-function addFx(x, y, f) { f.x = f.x ?? x; f.y = f.y ?? y; for (const p of players.values()) if (Math.abs(p.x - x) < 14 && Math.abs(p.y - y) < 11) p.fx.push(f); }
+function queueFx(p, f) {
+  // Para um cliente atrasado, o estado mais recente importa mais que centenas
+  // de faíscas antigas. A fila é curta e o servidor nunca cresce em memória.
+  if (p.fx.length >= FX_QUEUE_LIMIT) p.fx.splice(0, p.fx.length - FX_QUEUE_LIMIT + 1);
+  p.fx.push(f);
+}
+function addFx(x, y, f) {
+  f.x = f.x ?? x; f.y = f.y ?? y;
+  // Usa a mesma grade espacial de monstros, em vez de percorrer todos os
+  // jogadores online para cada impacto.
+  near(x, y, 14, 11, e => { if (e.kind === 'p') queueFx(e, f); });
+}
 
 function addItem(p, id, q = 1) {
   const it = ITEMS[id]; if (!it) return false;
@@ -420,7 +440,10 @@ function monTick(m, now) {
   if (tgt && (isTown(tgt.x, tgt.y) || cheb(m, tgt) > 10 || tgt.safeUntil > now)) tgt = null;
   if (!tgt && !def.passive) {
     let best = 7;
-    for (const p of players.values()) { const d = cheb(m, p); if (d < best && !isTown(p.x, p.y) && !(p.safeUntil > now)) { best = d; tgt = p; } }
+    // Antes este ponto comparava cada monstro ativo com todos os jogadores.
+    // Em mil conexões, uma briga local podia virar milhões de comparações por
+    // segundo. A busca espacial só visita quem está dentro do raio de aggro.
+    near(m.x, m.y, 6, 6, p => { const d = p.kind === 'p' ? cheb(m, p) : 99; if (d < best && !isTown(p.x, p.y) && !(p.safeUntil > now)) { best = d; tgt = p; } });
   }
   m.target = tgt ? tgt.id : null;
   if (tgt && !def.passive) {
@@ -444,6 +467,20 @@ function monTick(m, now) {
 }
 
 // ------------------------------------------------------------------ TICK JOGADOR
+// Um passo na direção d. Retorna true (andou), 'portal' (atravessou), um monstro (encostou) ou false.
+function walkStep(p, d, now) {
+  p.path = null;
+  const nx = p.x + DX[d], ny = p.y + DY[d], pt = portalAt(nx, ny);
+  if (pt && p.level < REGIONS[pt.to].lvl) {        // portal trancado pelo nível
+    p.dir = d; p.nextMove = now + 400;
+    if (now - (p.portalMsg || 0) > 3000) { p.portalMsg = now; msg(p, `Este portal leva a ${REGIONS[pt.to].name}. Você precisa do nível ${REGIONS[pt.to].lvl}.`, '#f88'); }
+    return false;
+  }
+  if (tryMove(p, d)) { p.nextMove = now + stepTime(p); if (pt) { portalTravel(p, pt); return 'portal'; } return true; }
+  p.dir = d; const e = occ.get(ny * TW + nx);
+  if (e && e.kind === 'm' && !isTown(p.x, p.y)) { p.target = e.id; p.autoTarget = true; return e; }
+  return false;
+}
 function playerTick(p, now) {
   if (now - p.lastRegen >= 2000) {
     p.lastRegen = now;
@@ -465,15 +502,18 @@ function playerTick(p, now) {
   // segurança: se o celular parar de mandar "andar", o personagem para sozinho
   if (p.walkDir >= 0 && now - (p.walkAt || 0) > 1500) p.walkDir = -1;   // 1,5 s: tolera oscilação da internet móvel
   if (now >= p.nextMove) {
-    if (p.walkDir >= 0) {
-      p.path = null;
-      const nx = p.x + DX[p.walkDir], ny = p.y + DY[p.walkDir], pt = portalAt(nx, ny);
-      if (pt && p.level < REGIONS[pt.to].lvl) {        // portal trancado pelo nível
-        p.dir = p.walkDir; p.nextMove = now + 400;
-        if (now - (p.portalMsg || 0) > 3000) { p.portalMsg = now; msg(p, `Este portal leva a ${REGIONS[pt.to].name}. Você precisa do nível ${REGIONS[pt.to].lvl}.`, '#f88'); }
-      }
-      else if (tryMove(p, p.walkDir)) { p.nextMove = now + stepTime(p); if (pt) { portalTravel(p, pt); return; } }
-      else { p.dir = p.walkDir; const e = occ.get((p.y + DY[p.walkDir]) * TW + p.x + DX[p.walkDir]); if (e && e.kind === 'm' && !isTown(p.x, p.y)) { p.target = e.id; p.autoTarget = true; t = e; } }
+    // anda com o controle; ao soltar, termina os passos que o celular já mostrou (stopAt),
+    // para a posição do servidor e a da tela baterem sem "puxão" para trás
+    let d = p.walkDir;
+    if (d < 0 && p.stopAt) {
+      if ((p.x === p.stopAt.x && p.y === p.stopAt.y) || p.stopAt.n <= 0) p.stopAt = null;
+      else { d = p.stopAt.d; p.stopAt.n--; }
+    }
+    if (d >= 0) {
+      const r = walkStep(p, d, now);
+      if (r === 'portal') return;
+      if (r && r.kind) t = r;                     // encostou num monstro: vira alvo
+      if (r === false) p.stopAt = null;
     }
     // o personagem NUNCA anda sozinho: sem perseguição automática nem caminho automático
   }
@@ -503,15 +543,18 @@ function castSpell(p, id) {
     const range = sp.range || 1;
     if (!t || !canHit(p, t)) return msg(p, 'Selecione um alvo primeiro.', '#f88');
     if (cheb(p, t) > range) return msg(p, 'Alvo muito longe.', '#f88');
+    addFx(p.x, p.y, { k: 'cast', fx: sp.fx || 'steel' });
     if (sp.type === 'target') addFx(p.x, p.y, { k: 'proj', tx: t.x, ty: t.y, fx: sp.fx });
-    else addFx(t.x, t.y, { k: 'area', fx: 'strike' });
-    attack(p, t, sp.mult, sp.fx === 'ice' ? '#7df' : sp.fx === 'fire' ? '#fa3' : null);
+    else addFx(t.x, t.y, { k: 'area', fx: sp.fx || 'strike' });
+    attack(p, t, sp.mult, sp.fx === 'water' ? '#66dfff' : sp.fx === 'fire' ? '#ff9a32' : sp.fx === 'earth' ? '#d7a55b' : null);
   } else if (sp.type === 'heal') {
+    addFx(p.x, p.y, { k: 'cast', fx: sp.fx || 'water' });
     const v = Math.round(sp.base + sp.scale * p.level + p.stats.mag * 3);
     p.hp = Math.min(maxHp(p), p.hp + v);
-    addFx(p.x, p.y, { k: 'heal' }); addFx(p.x, p.y, { k: 'dmg', v: '+' + v, c: '#4af' });
+    addFx(p.x, p.y, { k: 'heal', fx: sp.fx || 'water' }); addFx(p.x, p.y, { k: 'dmg', v: '+' + v, c: '#4af' });
   } else if (sp.type === 'area') {
     if (isTown(p.x, p.y)) return msg(p, 'Não é permitido atacar na cidade.', '#f88');
+    addFx(p.x, p.y, { k: 'cast', fx: sp.fx || 'earth' });
     const r = sp.radius;
     for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
       if (!dx && !dy) continue; if (dx * dx + dy * dy > r * r + 1) continue;
@@ -520,6 +563,7 @@ function castSpell(p, id) {
       if (e && e !== p && (e.kind === 'm' || (e.kind === 'p' && p.target === e.id)) && canHit(p, e)) attack(p, e, sp.mult);
     }
   } else if (sp.type === 'buff') {
+    addFx(p.x, p.y, { k: 'cast', fx: sp.fx || 'fire' });
     p.berserk = now + sp.dur; addFx(p.x, p.y, { k: 'area', fx: 'berserk' }); msg(p, 'Você entrou em fúria!', '#f84');
   }
   p.mp -= sp.mp; p.cds[id] = now + sp.cd;
@@ -810,7 +854,17 @@ wss.on('connection', (ws, req) => {
       return;
     }
     switch (m.t) {
-      case 'walk': p.walkDir = [0, 1, 2, 3].includes(m.d) ? m.d : -1; p.walkAt = Date.now(); break;
+      case 'walk': {
+        const now = Date.now(), d = [0, 1, 2, 3].includes(m.d) ? m.d : -1, last = p.walkDir;
+        p.walkDir = d; p.walkAt = now;
+        if (d >= 0) { p.stopAt = null; if (now >= p.nextMove) walkStep(p, d, now); }
+        else if (last >= 0 && Number.isInteger(m.x) && Number.isInteger(m.y)) {
+          // parou: se o celular mostrou o personagem até 3 passos à frente nessa mesma direção, completa os passos
+          const dx = m.x - p.x, dy = m.y - p.y, n = Math.abs(dx) + Math.abs(dy);
+          if (n > 0 && n <= 3 && (dx === 0 || dy === 0) && DX[last] * Math.sign(dx) + DY[last] * Math.sign(dy) === 1) p.stopAt = { x: m.x, y: m.y, d: last, n };
+        }
+        break;
+      }
       case 'goto': break; // removido: o personagem só anda pelo controle do jogador
       case 'target': {
         const e = ents.get(m.id);
@@ -945,10 +999,24 @@ function tick() {
   for (const p of players.values()) playerTick(p, now);
   friendSync(now);
   // enviar estado (só entidades na tela de cada jogador)
+  // Em lotação alta, 4–6 atualizações/s continuam suaves graças à interpolação
+  // do cliente e reduzem bastante CPU, banda e pressão nos WebSockets.
+  const snapshotEvery = players.size >= 750 ? 250 : players.size >= 350 ? 200 : players.size >= 120 ? 150 : 100;
   for (const p of players.values()) {
+    if (p.nextSnapshot && now < p.nextSnapshot) continue;
+    p.nextSnapshot = now + snapshotEvery;
     // Nome e aparência só vão quando a criatura aparece ou muda (economiza internet do celular)
+    const nearby = [];
+    near(p.x, p.y, 12, 9, e => nearby.push(e));
+    // Em hubs cheios, conserva o próprio jogador, alvo e NPCs antes dos mais
+    // próximos. A lógica do servidor não é afetada — isso só limita a visão.
+    if (nearby.length > VIEW_ENTITY_LIMIT) {
+      const rank = e => (e.id === p.id ? -10000 : e.id === p.target ? -9000 : e.kind === 'n' ? -5000 : 0) + Math.abs(e.x - p.x) + Math.abs(e.y - p.y);
+      nearby.sort((a, b) => rank(a) - rank(b));
+      nearby.length = VIEW_ENTITY_LIMIT;
+    }
     const list = [], known = p.known || (p.known = new Map()), seen = new Set();
-    near(p.x, p.y, 12, 9, e => {
+    for (const e of nearby) {
       const hpPct = e.kind === 'n' ? 100 : Math.max(0, Math.round(100 * e.hp / (e.kind === 'p' ? maxHp(e) : e.mhp)));
       let look = e.look;
       if (e.kind === 'p') look = ['c', e.voc, e.eq.armor || '', e.eq.helmet || '', e.eq.weapon || '', e.eq.shield || '', e.app.skin, e.app.hs, e.app.hc, ''].join('|');
@@ -957,12 +1025,14 @@ function tick() {
       const sig = look + '\n' + e.name, fresh = known.get(e.id) !== sig;
       if (fresh) known.set(e.id, sig);
       list.push([e.id, e.kind, e.x, e.y, e.dir, fresh ? look : 0, fresh ? e.name : 0, hpPct, e.kind === 'p' ? (e.skull > now ? 1 : 0) | (e.berserk > now ? 2 : 0) : 0, e.kind === 'p' ? e.level : 0, attackMs]);
-    });
+    }
     for (const id of known.keys()) if (!seen.has(id)) known.delete(id);
     const cds = {}; for (const k in p.cds) if (p.cds[k] > now) cds[k] = p.cds[k] - now;
     const me = { x: p.x, y: p.y, hp: p.hp, mhp: maxHp(p), mp: p.mp, mmp: maxMp(p), lv: p.level, xp: p.xp, xpa: xpFor(p.level), xpb: xpFor(p.level + 1), gold: p.gold, tg: p.target, cds, voc: p.voc, town: isTown(p.x, p.y), r: regionOf(p.x), berserk: Math.max(0, p.berserk - now), atkDelay: attackDelay(p) };
     if (p.dirty) { Object.assign(me, { inv: p.inv, eq: p.eq, st: p.stats, pts: p.points, atk: Math.round(playerAtk(p)), def: Math.round(playerDef(p)), task: p.task, name: p.name }); p.dirty = false; }
-    send(p, { t: 's', me, e: list, fx: p.fx });
+    // Se o navegador estiver atrasado, a próxima foto será completa e com
+    // aparências reanunciadas; nunca acumulamos uma fila infinita de estados.
+    if (!send(p, { t: 's', me, e: list, fx: p.fx }, true)) p.known = new Map();
     p.fx = [];
   }
 }
@@ -994,6 +1064,7 @@ process.on('SIGINT', shutdown); process.on('SIGTERM', shutdown);
 
 logEv('start', null, `Servidor iniciado (Node ${process.version})` + (ADMIN_PASSWORD ? '' : ' — painel admin desligado: defina ADMIN_PASSWORD'));
 server.on('error', e => { console.error('Não foi possível abrir a porta ' + PORT + ':', e.message); process.exit(1); });
+wss.on('error', e => { console.error('Não foi possível abrir a porta ' + PORT + ':', e.message); process.exit(1); });   // o ws repassa o erro da porta para cá
 if (process.env.VERCEL) {
   // Na Vercel o servidor é uma função (api/server.js). Cada conexão dura no máximo 5 min (plano grátis):
   // antes disso o servidor pede ao celular para reconectar sozinho, sem o jogador perceber.

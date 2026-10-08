@@ -1,5 +1,6 @@
 {
   "cell": [128, 192],
+  "animationManifest": "animation-manifest.json",
   "sheets": [
     "body_0", "body_1", "body_2", "body_npc_guard", "body_npc_blacksmith", "body_npc_healer", "body_npc_sage",
     "hair_curto_preto", "hair_curto_castanho", "hair_curto_loiro", "hair_curto_ruivo", "hair_curto_branco", "hair_curto_azul", "hair_curto_rosa",

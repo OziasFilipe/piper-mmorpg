@@ -2,44 +2,45 @@
 
 O jogo roda **inteiro na Vercel**: as telas e imagens (CDN) **e o servidor do jogo** (mundo, monstros, chat, amigos, painel admin), que vira uma função em `api/server.js`, na região **São Paulo (gru1)**.
 
-O mesmo código também roda em qualquer outro lugar, sem mudar nada:
+## Onde os dados ficam salvos (sempre SQLite)
 
-| Onde | Como ligar | Onde salva os personagens |
+| Onde o jogo roda | Banco | Atualizar o jogo apaga os dados? |
 | --- | --- | --- |
-| Seu computador | `npm install` e `npm start` (ou `iniciar.bat`) | arquivo `data/players.sqlite` |
-| VPS com Docker | veja `DOCKER.md` | volume do Docker (SQLite) |
-| Render | `render.yaml` | SQLite (com disco no plano pago) |
-| **Vercel** | este guia | **Redis (Upstash)** |
+| Seu computador (`npm start` / `iniciar.bat`) | SQLite: `data/players.sqlite` | **Não** (a pasta `data` não vai para o GitHub) |
+| VPS com Docker (`DOCKER.md`) | SQLite no volume `piper-dados` | **Não** (o volume fica fora da imagem) |
+| **Vercel** | **Turso = SQLite na nuvem** | **Não** (o banco fica no Turso, fora da Vercel) |
+| Render | SQLite com disco (plano pago) ou Turso | Não, com disco ou Turso |
 
-O servidor escolhe sozinho onde salvar (arquivo `store.js`): Redis quando existe, senão SQLite, senão memória.
+No SQLite local o servidor também faz **cópia de segurança** sozinho em `data/backups/` toda vez que liga (ou seja, a cada atualização) e uma vez por dia, guardando as 14 mais novas.
+
+A Vercel não tem disco: sem o Turso, os personagens ficariam só na memória e sumiriam a cada atualização. Por isso o passo 2 abaixo é obrigatório.
 
 ## Passo a passo na Vercel
 
-1. **Importar:** na Vercel, *Add New… → Project → Import* o repositório `piper-mmorpg`. Não mexa em nada da configuração (o `vercel.json` já cuida de tudo).
-2. **Banco para salvar os personagens (obrigatório):** abra o projeto → aba **Storage** → **Create Database** (ou *Marketplace*) → **Upstash for Redis** → plano grátis → **Connect** ao projeto `piper-mmorpg`.
-   Isso cria sozinho as variáveis `KV_REST_API_URL` e `KV_REST_API_TOKEN`.
-   *Sem esse passo o jogo funciona, mas os personagens somem sempre que o servidor reinicia.*
+1. **Importar:** na Vercel, *Add New… → Project → Import* o repositório `piper-mmorpg` (o `vercel.json` já configura tudo).
+2. **Banco SQLite na nuvem (obrigatório):** no projeto → aba **Storage** → **Create Database** → **Turso** (plano grátis) → **Connect** ao projeto `piper-mmorpg`.
+   Isso cria sozinho as variáveis `TURSO_DATABASE_URL` e `TURSO_AUTH_TOKEN`.
+   *Sem Storage na sua conta? Crie o banco em turso.tech e cadastre as duas variáveis manualmente em Settings → Environment Variables.*
 3. **Senha do painel admin:** *Settings → Environment Variables* → `ADMIN_PASSWORD` = uma senha forte.
-4. **Não crie** `PIPER_SERVER` (se existir, apague): ela só serve para usar um servidor de fora (ver abaixo).
-5. **Deployments → ⋯ → Redeploy** (variáveis novas só valem em uma publicação nova).
-6. Abra `https://SEU-PROJETO.vercel.app` no celular. O painel fica em `https://SEU-PROJETO.vercel.app/admin`.
+4. **Não crie** `PIPER_SERVER` (se existir, apague): ela só serve para usar um servidor de fora.
+5. **Deployments → ⋯ → Redeploy** (variáveis novas só valem numa publicação nova).
+6. Confira `https://SEU-PROJETO.vercel.app/health` → `ok 0`. O log da função deve mostrar `[armazenamento] usando turso`.
 
-Para conferir: `https://SEU-PROJETO.vercel.app/health` deve mostrar `ok 0`.
+Depois disso, cada Push no GitHub publica a atualização e **os personagens continuam lá**.
 
 ## Como o jogo se adapta à Vercel
 
-- **Conexão renovada sozinha:** na Vercel cada conexão em tempo real dura no máximo 5 minutos (plano grátis). Por volta dos 4,5 minutos o servidor pede ao celular para reconectar e o jogo volta no mesmo segundo, com o mesmo personagem, sem sair da tela. A mesma reconexão automática vale quando a internet do celular oscila (em qualquer lugar onde o jogo rode).
-- **Salvamento:** cada mudança é gravada no Redis em lotes a cada 2 segundos, e o personagem é recarregado do Redis ao entrar.
+- **Conexão renovada sozinha:** na Vercel cada conexão em tempo real dura no máximo 5 minutos (plano grátis). Perto disso o servidor pede ao celular para reconectar e o jogo volta no mesmo segundo, com o mesmo personagem, sem sair da tela.
+- **Salvamento:** cada mudança vai para o Turso em lotes a cada 2 segundos, e o personagem é recarregado do banco ao entrar.
 
 ## Limites da Vercel (importante)
 
 - O suporte da Vercel a conexões em tempo real ainda é **beta**.
-- Com muitos jogadores ao mesmo tempo a Vercel pode abrir **mais de uma cópia** do servidor. Os personagens continuam salvos, mas jogadores em cópias diferentes **não se veem** no mapa nem no chat. Com poucos jogadores isso quase não acontece.
-- O plano grátis (Hobby) tem cota mensal: **4 horas de CPU** e **360 GB-hora de memória**. A memória conta o tempo todo em que há alguém conectado; com a função usando 2 GB, isso dá cerca de **180 horas de servidor ligado por mês** (umas 6 horas por dia). Passou disso, a Vercel pausa até o mês seguinte (ou cobra, no plano Pro). Acompanhe em *Usage*.
-- O Redis grátis do Upstash também tem limite de comandos por mês (veja no painel do Upstash).
+- Com muitos jogadores ao mesmo tempo a Vercel pode abrir **mais de uma cópia** do servidor: os personagens continuam salvos, mas jogadores em cópias diferentes **não se veem** no mapa nem no chat.
+- O plano grátis (Hobby) tem cota mensal de **4 horas de CPU** e **360 GB-hora de memória** (cerca de 180 horas por mês com gente conectada). Acompanhe em *Usage*.
 
 Para muitos jogadores o dia inteiro, a VPS com Docker (`DOCKER.md`) é mais barata e sem esses limites.
 
 ## Opcional: usar um servidor de fora (VPS)
 
-Se quiser que a Vercel sirva só as telas e o jogo conecte na sua VPS, crie `PIPER_SERVER` = `https://jogo.seudominio.com.br` e faça Redeploy. Para testar outro servidor sem mexer na Vercel, abra o site com `?server=https://...` no fim do endereço.
+Crie `PIPER_SERVER` = `https://jogo.seudominio.com.br` e faça Redeploy: a Vercel serve só as telas e o jogo conecta na sua VPS.

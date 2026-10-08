@@ -336,7 +336,7 @@ const SPR = (function () {
       if (id === 'whirl') { for (let a = 0; a < 18; a++) { const rr = 2 + a * 0.32, t = a * 0.7; r(8 + Math.cos(t) * rr, 8 + Math.sin(t) * rr, 1.5, 1.5, '#ccd'); } }
       if (id === 'berserk') { disc(r, 8, 7, 4, '#eee'); r(6, 6, 1.5, 2, '#a00'); r(9, 6, 1.5, 2, '#a00'); r(6, 11, 4, 2, '#eee'); r(7, 11, 0.5, 2, '#333'); r(8.5, 11, 0.5, 2, '#333'); }
       if (id === 'fireball') { disc(r, 8, 8, 5, '#e43'); disc(r, 8, 8, 3, '#fa3'); disc(r, 8, 8, 1, '#ffa'); }
-      if (id === 'ice') { for (let i = 0; i < 9; i++) r(3 + i, 12 - i, 2, 2, i % 3 ? '#9ef' : '#fff'); r(11, 2, 3, 3, '#fff'); }
+      if (id === 'ice') { disc(r, 8, 7, 4, '#49cfff'); disc(r, 7, 6, 2, '#b9f8ff'); r(7, 10, 2, 4, '#168dc4'); r(5, 13, 6, 1.5, '#62ddff'); }
       if (id === 'storm') { const pts = [[9, 1], [7, 4], [9, 5], [6, 9], [8, 10], [5, 14]]; for (const [x, y] of pts) r(x, y, 3, 2, '#ff6'); r(7, 7, 2, 2, '#c8f'); }
       return c;
     });
@@ -448,14 +448,17 @@ const SPR = (function () {
     cv = mk(Math.ceil(CPX * RS), Math.ceil(CPX * RS));
     const c = cv.getContext('2d'); c.scale(RS, RS); c.imageSmoothingEnabled = false;
     const P = pats(c), ox = -cx * CPX, oy = -cy * CPX;
+    let wet = false;
     for (let j = 0; j < CHK; j++) for (let i = 0; i < CHK; i++) {
       const x = cx * CHK + i, y = cy * CHK + j, t = at(x, y), dx = i * 32, dy = j * 32;
+      if (t === T.WATER || t === T.BRIDGE) wet = true;
       if (t === T.WATER) waterOverlay(c, x, y, dx, dy, at);
       else if (t === T.BRIDGE) bridgeTile(c, x, y, dx, dy, at);
       else if (t === T.TREE && treeBase(x, y, at) !== T.GRASS) c.drawImage(tile(treeBase(x, y, at), hash(x, y, 9) * 4 | 0, 0), dx, dy, 32, 32);
       else if (t === T.GRASS || t === T.TREE || t === T.FLOWER) grassTile(c, t, x, y, dx, dy, ox, oy, P);
       else c.drawImage(tile(t, hash(x, y, 9) * 4 | 0, 0), dx, dy, 32, 32);
     }
+    cv.wet = wet;
     chunks.set(key, cv);
     while (chunks.size > MAX_CHUNKS) chunks.delete(chunks.keys().next().value);
     return cv;
@@ -468,10 +471,15 @@ const SPR = (function () {
     }
     if (mainCtx !== ctx) { mainCtx = ctx; mainPat = ctx.createPattern(GIMG['water-seamless.jpg'], 'repeat'); }
     const t = now / 1000;
-    fillPat(ctx, mainPat, ox + t * 5 + Math.sin(t * 0.6) * 3, oy + t * 2.5, 0.25, x0 * 32 + ox, y0 * 32 + oy, (x1 - x0 + 1) * 32, (y1 - y0 + 1) * 32);
     const RS = K >= 2.6 ? 2.5 : K >= 1.8 ? 2 : 1.5;
-    const sm = ctx.imageSmoothingEnabled; ctx.imageSmoothingEnabled = true;
     const cx0 = Math.floor(x0 / CHK), cx1 = Math.floor(x1 / CHK), cy0 = Math.floor(y0 / CHK), cy1 = Math.floor(y1 / CHK);
+    // água animada só onde há água (antes pintava a tela inteira a cada quadro)
+    const wx = ox + t * 5 + Math.sin(t * 0.6) * 3, wy = oy + t * 2.5;
+    for (let cy = cy0; cy <= cy1; cy++) for (let cx = cx0; cx <= cx1; cx++) {
+      const c = chunks.get(cx + ',' + cy + ',' + RS);
+      if (!c || c.wet) fillPat(ctx, mainPat, wx, wy, 0.25, cx * CPX + ox, cy * CPX + oy, CPX + 0.1, CPX + 0.1);
+    }
+    const sm = ctx.imageSmoothingEnabled; ctx.imageSmoothingEnabled = true;
     for (let cy = cy0; cy <= cy1; cy++) for (let cx = cx0; cx <= cx1; cx++)
       ctx.drawImage(chunk(cx, cy, at, RS), cx * CPX + ox, cy * CPX + oy, CPX + 0.1, CPX + 0.1);
     ctx.imageSmoothingEnabled = sm;

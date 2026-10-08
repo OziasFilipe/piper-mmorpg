@@ -1,0 +1,12 @@
+{
+  "warrior": {
+    "idle": "warrior/idle.json",
+    "walk": "warrior/walk.json",
+    "attack": "warrior/attack.json"
+  },
+  "wizard": {
+    "idle": "wizard/idle.json",
+    "walk": "wizard/walk.json",
+    "attack": "wizard/attack.json"
+  }
+}

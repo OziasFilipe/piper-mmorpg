@@ -1,0 +1,9 @@
+{
+  "action": "walk",
+  "sheet": "walk.png",
+  "cell": [128, 192],
+  "frames": 8,
+  "fps": 18,
+  "loop": true,
+  "ground": 185
+}

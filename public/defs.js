@@ -83,16 +83,16 @@
 
   D.SPELLS = {
     warrior: [
-      { id: 'strike',  name: 'Golpe Brutal',      lvl: 1,  mp: 8,  cd: 2500,  type: 'melee', mult: 1.8 },
-      { id: 'heal',    name: 'Curar Feridas',     lvl: 4,  mp: 15, cd: 4000,  type: 'heal', base: 25, scale: 4 },
-      { id: 'whirl',   name: 'Redemoinho',        lvl: 8,  mp: 25, cd: 6000,  type: 'area', radius: 1, mult: 1.4, fx: 'whirl' },
+      { id: 'strike',  name: 'Golpe Brutal',      lvl: 1,  mp: 8,  cd: 2500,  type: 'melee', mult: 1.8, fx: 'earth' },
+      { id: 'heal',    name: 'Curar Feridas',     lvl: 4,  mp: 15, cd: 4000,  type: 'heal', base: 25, scale: 4, fx: 'water' },
+      { id: 'whirl',   name: 'Redemoinho de Pedra', lvl: 8, mp: 25, cd: 6000, type: 'area', radius: 1, mult: 1.4, fx: 'earth' },
       { id: 'berserk', name: 'Fúria Berserker',   lvl: 15, mp: 40, cd: 30000, type: 'buff', dur: 12000 }
     ],
     wizard: [
       { id: 'fireball', name: 'Bola de Fogo',       lvl: 1,  mp: 10, cd: 1800, type: 'target', mult: 1.6, range: 6, fx: 'fire' },
-      { id: 'heal',     name: 'Cura',               lvl: 3,  mp: 20, cd: 3000, type: 'heal', base: 40, scale: 6 },
-      { id: 'ice',      name: 'Lança de Gelo',      lvl: 8,  mp: 25, cd: 3500, type: 'target', mult: 2.4, range: 6, fx: 'ice' },
-      { id: 'storm',    name: 'Tempestade Elétrica',lvl: 14, mp: 60, cd: 8000, type: 'area', radius: 3, mult: 1.8, fx: 'energy' }
+      { id: 'heal',     name: 'Cura das Marés',     lvl: 3,  mp: 20, cd: 3000, type: 'heal', base: 40, scale: 6, fx: 'water' },
+      { id: 'ice',      name: 'Jato d\'Água',       lvl: 8,  mp: 25, cd: 3500, type: 'target', mult: 2.4, range: 6, fx: 'water' },
+      { id: 'storm',    name: 'Tempestade Elétrica',lvl: 14, mp: 60, cd: 8000, type: 'area', radius: 3, mult: 1.8, fx: 'lightning' }
     ]
   };
 

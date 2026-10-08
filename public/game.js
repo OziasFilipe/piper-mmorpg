@@ -26,6 +26,7 @@
   let RX = 0, REG = D.REGIONS[0];   // região carregada (x inicial no mundo) e seus dados
   let me = {}, inv = [], eq = {}, stats = {}, task = null, myLook = '';
   const ents = new Map(); let fxs = []; const speech = new Map();
+  const FX_RENDER_LIMIT = 160;
   let friends = [], frSig = '', frReqs = [];   // amigos: [nome, online, região, x, y, nível]
   const isFriend = n => friends.some(f => f[0].toLowerCase() === String(n || '').toLowerCase());
   let miniImg = null, shopData = null, shopTab = 'buy', selSpell = 0, selItem = null;
@@ -112,10 +113,11 @@
     requestAnimationFrame(animPreview);
     if ($('createForm').style.display === 'none' || !titleShown) return;
     if (pAuto && t - pT > 2200) { pT = t; pDir = [1, 2, 3, 0][pDir]; }
-    const frame = pWalk ? [1, 0, 2, 0][Math.floor(t / 170) % 4] : 0;
-    const c = $('prevCv'), g = c.getContext('2d'); g.clearRect(0, 0, c.width, c.height); g.imageSmoothingQuality = 'high';
+    const action = pWalk ? 'walk' : 'idle';
     const look = CHARS.lookOf(voc, starter(voc), app);
-    g.drawImage(CHARS.sprite(look, pDir, frame), 0, 0, c.width, c.height);
+    const frame = pWalk ? (CHARS.actionFrame(look, 'walk', t) ?? Math.floor(t / 90) % 8) : 0;
+    const c = $('prevCv'), g = c.getContext('2d'); g.clearRect(0, 0, c.width, c.height); g.imageSmoothingQuality = 'high';
+    g.drawImage(CHARS.sprite(look, pDir, frame, action), 0, 0, c.width, c.height);
   }
 
   // ======================================================== CONEXÃO
@@ -208,12 +210,12 @@
       case 'welcome': {
         const again = inGame && reconnecting;   // reconectou: mantém chat e tela
         if (pendingCreds && !again) session = pendingCreds;
-        myId = m.id; loadRegion(m); inGame = true; connecting = false; ents.clear(); fxs = [];
+        predReset(null); myId = m.id; loadRegion(m); inGame = true; connecting = false; ents.clear(); fxs = [];
         if (!again) { $('feed').innerHTML = ''; $('chatLog').innerHTML = ''; }
         show('title', false); show('game', true); resize(); break;
       }
       case 'loading': showLoading(m.to); sfx('portal', 500); break;
-      case 'region': closeModals(); loadRegion(m); finishLoading(); break;
+      case 'region': closeModals(); predReset(null); loadRegion(m); finishLoading(); break;
       case 'travel': openMap('world', m); break;
       case 's': onState(m); break;
       case 'msg': addLog(m.m, m.c); if ($('mPanel').style.display === 'flex' && curTab === 'friends') renderFriends(true); break;
@@ -257,13 +259,18 @@
       Object.assign(e, { dir, hp, flags, lv }); if (look) e.look = look; if (name) e.name = name;   // 0 = não mudou
       if (attackMs) e.attackUntil = now + attackMs;
       e.dur = moveDur(e);
-      if (dir === 1) e.faceLeft = true; else if (dir === 3) e.faceLeft = false;
+      if (id === myId) { if (joyDir >= 0 && pred) { e.dir = pred.dir; } predServer(e, now); }
+      if (e.dir === 1) e.faceLeft = true; else if (e.dir === 3) e.faceLeft = false;
       if (id === myId && e.look && e.look !== myLook) {
         myLook = e.look; const pc = $('portrait'); const g = pc.getContext('2d'); g.clearRect(0, 0, pc.width, pc.height);
         drawPortrait(g, e.look, pc.width);
       }
     }
     for (const id of ents.keys()) if (!seen.has(id)) ents.delete(id);
+    // O servidor já limita a fila. Esta segunda barreira protege aparelhos
+    // móveis caso uma rajada chegue toda no mesmo pacote.
+    const fxLimit = mobileMode ? 96 : FX_RENDER_LIMIT;
+    if (fxs.length + m.fx.length > fxLimit) fxs.splice(0, fxs.length + m.fx.length - fxLimit);
     for (const f of m.fx) {
       f.t0 = now; fxs.push(f); fxSound(f);
       if (f.k === 'hit' && f.id) { const target = ents.get(f.id); if (target) target.hitUntil = now + 170; }
@@ -284,7 +291,49 @@
     g.imageSmoothingQuality = 'high';
     g.drawImage(spr, cx - side / 2, y0 - side * 0.06, side, side, size * 0.06, size * 0.08, size * 0.88, size * 0.88);
   }
+  // ---- Movimento previsto: o seu personagem anda NA HORA em que você toca no controle,
+  // sem esperar a resposta do servidor (a internet do celular leva 50-200 ms).
+  // O servidor continua mandando; se ele discordar (parede, monstro, empurrão), a tela corrige suave.
+  const PDX = [0, -1, 0, 1], PDY = [1, 0, -1, 0];
+  let pred = null;   // { x, y, fx, fy, t0, dur, next, hist: [[x,y]...], dir, idleAt }
+  const stepCad = e => cadence(Math.max(150, 260 - ((e && e.lv) || 1) * 2));
+  function predPos(now) { const k = pred.t0 ? Math.min(1, (now - pred.t0) / pred.dur) : 1; return { x: pred.fx + (pred.x - pred.fx) * k, y: pred.fy + (pred.y - pred.fy) * k, moving: k < 1, progress: k }; }
+  function predReset(e) { pred = e ? { x: e.x, y: e.y, fx: e.x, fy: e.y, t0: 0, dur: 1, next: 0, hist: [[e.x, e.y]], dir: e.dir, idleAt: 0 } : null; }
+  function predFree(x, y) {
+    if (D.BLOCK[tileAt(x, y)]) return false;
+    for (const e of ents.values()) if (e.id !== myId && e.x === x && e.y === y) return false;
+    for (const pt of D.portalsOf(REG.id)) if (RX + pt.x === x && (y === pt.y || y === pt.y + 1) && (me.lv || 1) < D.REGIONS[pt.to].lvl) return false;
+    return true;
+  }
+  function predGlide(x, y, now, ms) { const p = predPos(now); pred.fx = p.x; pred.fy = p.y; pred.x = x; pred.y = y; pred.t0 = now; pred.dur = ms; }
+  function predict(now) {
+    const meE = ents.get(myId); if (!meE) return;
+    if (!pred) predReset(meE);
+    const d = joyDir;
+    if (d >= 0 && !loadingOn && now >= pred.next) {
+      pred.dir = d; meE.dir = d; if (d === 1) meE.faceLeft = true; else if (d === 3) meE.faceLeft = false;
+      const lead = pred.hist.length - 1;            // passos à frente do servidor
+      if (lead >= 3) { pred.next = now + 40; return; }   // não se adianta demais
+      const nx = pred.x + PDX[d], ny = pred.y + PDY[d];
+      if (predFree(nx, ny)) {
+        const cad = stepCad(meE); predGlide(nx, ny, now, cad + 20);
+        pred.hist.push([nx, ny]); pred.next = now + cad; pred.idleAt = 0;
+      } else pred.next = now + 90;
+    }
+    if (d < 0 && !pred.idleAt) pred.idleAt = now;
+  }
+  // chegou a posição oficial do servidor
+  function predServer(e, now) {
+    if (!pred) return predReset(e);
+    const i = pred.hist.findIndex(h => h[0] === e.x && h[1] === e.y);
+    if (i >= 0) { pred.hist.splice(0, i); }                                  // servidor confirmou o caminho
+    else if (Math.abs(e.x - pred.x) + Math.abs(e.y - pred.y) > 4) { predReset(e); }   // teleporte/morte: pula
+    else { predGlide(e.x, e.y, now, 130); pred.hist = [[e.x, e.y]]; pred.next = now + 120; }   // discordou: corrige suave
+    // parado e o servidor terminou em outro lugar: acompanha o servidor
+    if (joyDir < 0 && pred.idleAt && now - pred.idleAt > 700 && (pred.x !== e.x || pred.y !== e.y) && !predPos(now).moving) { predGlide(e.x, e.y, now, 160); pred.hist = [[e.x, e.y]]; }
+  }
   function rpos(e, now) {
+    if (pred && e.id === myId) return predPos(now);
     const raw = e.t0 ? Math.min(1, (now - e.t0) / e.dur) : 1;
     // Velocidade constante (linear): andando sem parar, um quadrado emenda no outro sem "tranco".
     const k = raw;
@@ -348,12 +397,42 @@
   }
 
   // ======================================================== RENDER
-  const FXC = { fire: '#ff8a2a', ice: '#8ef0ff', arcane: '#d08aff', energy: '#fff35a' };
+  const FXC = { fire: '#ff8a2a', water: '#62ddff', lightning: '#fff36b', earth: '#d9a25f', ice: '#8ef0ff', arcane: '#d08aff', energy: '#fff35a' };
   // A câmera acompanha a posição interpolada em vez de pular a cada pacote.
   // Teleportes continuam instantâneos, mas os passos ganham uma inércia leve.
   let cam = { ox: 0, oy: 0, x: null, y: null, t: 0 };
+  // Resolução adaptativa: começa nítida; se o aparelho não aguenta ~50 fps, reduz um pouco a
+  // resolução interna do mapa (a tela continua do mesmo tamanho). Em aparelho bom fica no máximo.
+  const DPR_MAX = Math.min(window.devicePixelRatio || 1, 2);
+  const QLEVELS = [...new Set([DPR_MAX, DPR_MAX * 0.85, DPR_MAX * 0.7, 1.25, 1, 0.85].map(v => Math.round(v * 100) / 100).filter(v => v <= DPR_MAX))].sort((a, b) => b - a);
+  let qIdx = 0; try { const sv = +LS.get('piper_q'); if (sv > 0 && sv < QLEVELS.length) qIdx = sv; } catch (e) { }
+  const perfMon = { n: 0, sum: 0, last: 0, winStart: 0, slowWin: 0, goodSince: 0, coolUntil: 0, failedUp: 0 };
+  function perfFrame(now) {
+    const dt = now - perfMon.last; perfMon.last = now;
+    if (dt <= 0 || dt > 400 || document.hidden || loadingOn) { perfMon.n = perfMon.sum = perfMon.sq = 0; perfMon.winStart = now; return; }   // aba escondida/carregando não conta
+    perfMon.n++; perfMon.sum += dt; perfMon.sq = (perfMon.sq || 0) + dt * dt;
+    if (now - perfMon.winStart < 1000 || perfMon.n < 8) return;   // avalia a cada ~1 segundo
+    const avg = perfMon.sum / perfMon.n, sd = Math.sqrt(Math.max(0, perfMon.sq / perfMon.n - avg * avg)); perfMon.n = perfMon.sum = perfMon.sq = 0; perfMon.winStart = now;
+    // 30 fps cravados e regulares = economia de bateria do aparelho (não é falta de força): não mexe
+    if (avg > 30 && avg < 36 && sd < 3) { perfMon.slowWin = 0; return; }
+    if (now < perfMon.coolUntil) return;
+    if (avg > 21 && qIdx < QLEVELS.length - 1) {          // abaixo de ~48 fps: menos pixels
+      perfMon.slowWin++;
+      if (perfMon.slowWin >= 2 || avg > 45) {              // muito lento: desce 2 degraus de uma vez
+        qIdx = Math.min(QLEVELS.length - 1, qIdx + (avg > 45 ? 2 : 1)); perfMon.slowWin = 0; perfMon.coolUntil = now + 1500; perfMon.goodSince = 0; LS.set('piper_q', qIdx); resize();
+      }
+    } else {
+      perfMon.slowWin = 0;
+      if (avg < 17.6) { if (!perfMon.goodSince) perfMon.goodSince = now; }
+      else perfMon.goodSince = 0;
+      // fluido por 25 s: tenta voltar um degrau de nitidez (se piorar, desce de novo e espera mais)
+      if (qIdx > 0 && perfMon.goodSince && now - perfMon.goodSince > 25000 && now > perfMon.failedUp) {
+        qIdx--; perfMon.goodSince = 0; perfMon.coolUntil = now + 2500; perfMon.failedUp = now + 120000; LS.set('piper_q', qIdx); resize();
+      }
+    }
+  }
   function resize() {
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const dpr = QLEVELS[Math.min(qIdx, QLEVELS.length - 1)] || 1;
     const w = innerWidth, h = innerHeight;
     // Não usamos apenas a largura: um notebook estreito continua com controles
     // de teclado e arte no tamanho padrão. O aumento é exclusivo de toque real.
@@ -365,10 +444,16 @@
   }
   window.addEventListener('resize', resize);
 
-  function render() {
+  let lastMini = 0, rafEma = 16.7, rafLast = 0, rafOdd = false;
+  function render(ts) {
     requestAnimationFrame(render);
     if (!inGame || !tiles) return;
     const now = performance.now();
+    // telas de 120/144 Hz: desenha um quadro sim, outro não (~60 fps, a mesma fluidez com metade do esforço)
+    if (ts && rafLast) rafEma = rafEma * 0.95 + Math.min(50, ts - rafLast) * 0.05; rafLast = ts || now;
+    if (rafEma < 10.5) { rafOdd = !rafOdd; if (rafOdd) return; }
+    perfFrame(ts || now);
+    predict(now);
     const meE = ents.get(myId); if (!meE) return;
     const mp = rpos(meE, now);
     // Câmera presa ao personagem: como ele anda em velocidade constante, a tela desliza junto,
@@ -447,14 +532,13 @@
       const sy = p.y * TS + oy - top;
       const pct = e.hp / 100, hc = pct > 0.6 ? '#3fd35a' : pct > 0.3 ? '#f2c14e' : '#ef4444';
       const nc = e.kind === 'n' ? '#9fd8ff' : e.kind === 'p' ? ((e.flags & 1) ? '#ff6b6b' : e.id !== myId && isFriend(e.name) ? '#5cf08a' : '#ffffff') : hc;
-      ctx.font = `700 ${11 * UI}px Poppins, sans-serif`;
-      txt(e.name + (e.kind === 'p' && (e.flags & 1) ? ' ☠' : ''), sx, sy - 5 * UI, nc);
+      drawLabel(e.name + (e.kind === 'p' && (e.flags & 1) ? ' ☠' : ''), sx, sy - 5 * UI, nc);
       if (e.kind !== 'n') { const bw = 26, bh = Math.max(2, 3.5 * UI); ctx.fillStyle = 'rgba(0,0,0,.75)'; ctx.fillRect(sx - bw / 2 - 0.5, sy - 1, bw + 1, bh + 1); ctx.fillStyle = hc; ctx.fillRect(sx - bw / 2, sy - 0.5, bw * pct, bh); }
       const sp = speech.get(e.id);
       if (sp) { const age = now - sp.t0; if (age > 4500) speech.delete(e.id); else { ctx.font = `600 ${11 * UI}px Poppins, sans-serif`; wrapTxt(sp.text, sx, sy - 20 * UI, '#ffe14a'); } }
     }
     fxs = fxs.filter(f => drawFx(f, now, ox, oy));
-    drawMini(meE);
+    if (now - lastMini > 120) { lastMini = now; drawMini(meE); }
   }
   // Portal mágico: anel de pedra com redemoinho animado e faíscas subindo.
   function drawPortal(pt, wx, now, ox, oy) {
@@ -488,6 +572,22 @@
     ctx.font = `600 ${9 * UI}px Poppins, sans-serif`;
     txt(locked ? `Nível ${dest.lvl} necessário` : 'Portal', cx, cy - ry - 1, locked ? '#ffb3b3' : '#cfe9ff');
   }
+  // Etiqueta de nome desenhada uma vez numa imagem e reaproveitada a cada quadro.
+  const labels = new Map();
+  function drawLabel(text, x, y, color) {
+    if (!text) return;
+    const key = text + '|' + color + '|' + UI.toFixed(3) + '|' + K.toFixed(3);
+    let L = labels.get(key);
+    if (!L) {
+      const fs = 11 * UI, pad = 3 * UI; ctx.font = `700 ${fs}px Poppins, sans-serif`;
+      const w = ctx.measureText(text).width + pad * 2, h = fs * 1.5;
+      const c = document.createElement('canvas'); c.width = Math.max(1, Math.ceil(w * K)); c.height = Math.max(1, Math.ceil(h * K));
+      const g = c.getContext('2d'); g.scale(K, K); g.font = ctx.font; g.textAlign = 'center'; g.textBaseline = 'alphabetic';
+      g.lineWidth = 3 * UI; g.strokeStyle = 'rgba(0,0,0,.85)'; g.lineJoin = 'round'; g.strokeText(text, w / 2, fs * 1.08); g.fillStyle = color; g.fillText(text, w / 2, fs * 1.08);
+      L = { c, w, h, base: fs * 1.08 }; labels.set(key, L); if (labels.size > 400) labels.delete(labels.keys().next().value);
+    }
+    ctx.drawImage(L.c, x - L.w / 2, y - L.base, L.w, L.h);
+  }
   function txt(s, x, y, c) { ctx.lineWidth = 3 * UI; ctx.strokeStyle = 'rgba(0,0,0,.85)'; ctx.lineJoin = 'round'; ctx.strokeText(s, x, y); ctx.fillStyle = c; ctx.fillText(s, x, y); }
   function wrapTxt(s, x, y, c) {
     const words = s.split(' '), lines = []; let cur = '';
@@ -497,35 +597,47 @@
   function drawEnt(e, p, now, ox, oy) {
     const sx = p.x * TS + ox, sy = p.y * TS + oy;
     const attackLeft = Math.max(0, (e.attackUntil || 0) - now);
-    let frame = 0;
-    const attackPhase = attackLeft ? 1 - Math.min(1, attackLeft / 300) : 0;
-    if (attackLeft) frame = attackPhase < .26 ? 5 : attackPhase < .62 ? 6 : 7;
-    else if (p.moving) frame = 1 + (Math.floor(now / (e.kind === 'm' ? 72 : 76) + e.id * 1.7) % 4);
-    else if (e.kind === 'm' && Math.floor(now / 440 + e.id) % 5 === 0) frame = 1;
-    const attackStep = attackLeft ? Math.sin((1 - attackLeft / 300) * Math.PI) * (e.kind === 'p' ? 5.8 : 4.5) : 0;
-    const dir = [[0, 1], [-1, 0], [0, -1], [1, 0]][e.dir] || [0, 0];
+    const isCharacter = e.kind === 'p' || (typeof e.look === 'string' && e.look[0] === 'c');
     const isPlayer = e.kind === 'p';
     const characterLook = typeof e.look === 'string' && e.look[0] === 'c'
       ? e.look
       : ['c', isPlayer && e.id === myId && me.voc === 'wizard' ? 'wizard' : 'warrior', '', '', '', '', '0', 'curto', 'castanho', ''].join('|');
-    if (isPlayer || (typeof e.look === 'string' && e.look[0] === 'c')) {
+    let frame = 0, characterAction = 'idle';
+    const attackPhase = attackLeft ? 1 - Math.min(1, attackLeft / 300) : 0;
+    if (attackLeft) {
+      if (isCharacter) {
+        characterAction = 'attack';
+        frame = CHARS.actionFrame(characterLook, 'attack', 300 - attackLeft) ?? (attackPhase < .25 ? 0 : attackPhase < .62 ? 1 : 2);
+      }
+      else frame = attackPhase < .26 ? 5 : attackPhase < .62 ? 6 : 7;
+    } else if (p.moving) {
+      if (isCharacter) {
+        characterAction = 'walk';
+        frame = CHARS.actionFrame(characterLook, 'walk', now + e.id * 94) ?? Math.floor(now / 54 + e.id * 1.7) % 8;
+      }
+      else frame = 1 + Math.floor(now / 72 + e.id * 1.7) % 4;
+    }
+    // parado: fica no quadro parado (antes trocava de pose de repente e o bicho parecia dar pulinhos)
+    const attackStep = attackLeft ? Math.sin((1 - attackLeft / 300) * Math.PI) * (e.kind === 'p' ? 5.8 : 4.5) : 0;
+    const dir = [[0, 1], [-1, 0], [0, -1], [1, 0]][e.dir] || [0, 0];
+    if (isCharacter) {
       const scale = mobileMode ? 1.2 : 1;
-      const stepWave = p.moving ? Math.sin(now / 76 + e.id * 1.7) : 0;
-      const shadowW = p.moving ? 9 + Math.abs(stepWave) * 2.2 : 10;
-      ctx.fillStyle = 'rgba(0,0,0,.32)'; ctx.beginPath(); ctx.ellipse(sx + 16, sy + 28.7, shadowW * scale, (3.2 + Math.abs(stepWave) * .6) * scale, 0, 0, 7); ctx.fill();
+      const stepWave = p.moving ? Math.sin(now / 54 + e.id * 1.7) : 0;
+      const shadowW = 10;   // sombra de tamanho fixo
+      ctx.fillStyle = 'rgba(0,0,0,.32)'; ctx.beginPath(); ctx.ellipse(sx + 16, sy + 30.2, shadowW * scale, 3.4 * scale, 0, 0, 7); ctx.fill();
       if (e.flags & 2) { ctx.fillStyle = 'rgba(255,80,20,.28)'; ctx.beginPath(); ctx.ellipse(sx + 16, sy + 22, 17, 12, 0, 0, 7); ctx.fill(); }
-      const img = CHARS.sprite(characterLook, e.dir, frame);
+      const img = CHARS.sprite(characterLook, e.dir, frame, characterAction);
       const sway = p.moving ? stepWave * .55 : Math.sin(now / 650 + e.id * 1.7) * .35;
       const hurt = (e.hitUntil || 0) > now;
       ctx.save(); ctx.translate(dir[0] * attackStep, dir[1] * attackStep * .45);
       ctx.imageSmoothingEnabled = false;
       if (hurt) ctx.globalAlpha = 0.6;
-      // As folhas novas têm os pés na linha 185/192. Mantemos essa linha
-      // exatamente no chão do tile, inclusive nas poses de corrida/ataque.
-      const squash = p.moving ? Math.abs(stepWave) * .018 : 0;
+      // As folhas novas têm os pés na linha 185/192. A linha do solo é 31,
+      // igual aos monstros: antes em 29, o herói parecia levitar.
+      const squash = 0;   // sem esticar/achatar: o personagem tem sempre o mesmo tamanho
       const charW = 42 * scale * (1 + squash), charH = 63 * scale * (1 - squash);
-      const groundY = sy + 29, footRatio = 185 / 192;
-      ctx.drawImage(img, sx + 16 - charW / 2 + sway, groundY - charH * footRatio, charW, charH);
+      const groundY = sy + 31, footRatio = 185 / 192;
+      ctx.drawImage(img, Math.round((sx + 16 - charW / 2 + sway) * K) / K, Math.round((groundY - charH * footRatio) * K) / K, charW, charH);
       ctx.restore(); ctx.imageSmoothingEnabled = false;
       return;
     }
@@ -538,12 +650,12 @@
     const enemySize = e.look === 'dragon' ? 70 : elite ? 51 : e.look === 'rabbit' ? 50 : 43;
     const iw = (enemySprite ? enemySize : img.width) * scale;
     const ih = (enemySprite ? enemySize : img.height) * scale;
-    const idleBob = enemySprite && !p.moving ? Math.sin(now / 300 + e.id) * .8 : 0;
+    const idleBob = enemySprite && !p.moving ? Math.sin(now / 520 + e.id) * .45 : 0;   // respiração suave
     ctx.fillStyle = 'rgba(0,0,0,.28)'; ctx.beginPath(); ctx.ellipse(sx + 16, sy + 29, iw > 40 ? 16 : 10, 4, 0, 0, 7); ctx.fill();
     ctx.save(); ctx.translate(dir[0] * attackStep, dir[1] * attackStep * .45);
     if ((e.hitUntil || 0) > now) ctx.globalAlpha = 0.6;
     ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(img, Math.round(sx + (TS - iw) / 2), Math.round(sy + TS - ih - 1 + idleBob), iw, ih);
+    ctx.drawImage(img, Math.round((sx + (TS - iw) / 2) * K) / K, Math.round((sy + TS - ih - 1 + idleBob) * K) / K, iw, ih);
     ctx.restore();
     ctx.imageSmoothingEnabled = false;
   }
@@ -567,6 +679,22 @@
     const age = now - f.t0, sx = f.x * TS + ox, sy = f.y * TS + oy;
     switch (f.k) {
       case 'dmg': { if (age > 1100) return false; const k = age / 1100; ctx.globalAlpha = 1 - k * k; ctx.font = `800 ${(f.xp ? 11 : 14) * UI}px Poppins, sans-serif`; txt(String(f.v), sx + 16 + (f.xp ? 10 : 0), sy - 2 - k * 26 - (f.xp ? 10 : 0), f.c); ctx.globalAlpha = 1; return true; }
+      case 'cast': {
+        if (age > 390) return false;
+        const k = age / 390, c = FXC[f.fx] || '#f4e3c1', cx = sx + 16, cy = sy + 18;
+        ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = (1 - k) * .9;
+        ctx.strokeStyle = c; ctx.fillStyle = c; ctx.shadowColor = c; ctx.shadowBlur = 10 * K;
+        ctx.lineWidth = 1.6 + k;
+        ctx.beginPath(); ctx.ellipse(cx, cy, 4 + k * 14, 2 + k * 5, 0, 0, Math.PI * 2); ctx.stroke();
+        for (let i = 0; i < 7; i++) {
+          const a = i * .897 + k * 5, r = 6 + k * 13;
+          const x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r * .46;
+          if (f.fx === 'earth') ctx.fillRect(x - 1.7, y - 1.7 - k * 4, 3.4, 3.4);
+          else if (f.fx === 'lightning') { ctx.beginPath(); ctx.moveTo(x, y - 4); ctx.lineTo(x - 1.6, y); ctx.lineTo(x + 1.1, y); ctx.lineTo(x - .5, y + 4); ctx.stroke(); }
+          else { ctx.beginPath(); ctx.arc(x, y - k * 5, f.fx === 'fire' ? 2.4 : 1.8, 0, Math.PI * 2); ctx.fill(); }
+        }
+        ctx.restore(); return true;
+      }
       case 'swing': {
         if (age > 260) return false;
         const k = age / 260, dx = (f.tx ?? f.x) - f.x, dy = (f.ty ?? f.y) - f.y, ang = Math.atan2(dy, dx);
@@ -586,15 +714,40 @@
       case 'puff': { if (age > 400) return false; ctx.strokeStyle = 'rgba(140,190,255,' + (1 - age / 400) + ')'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(sx + 16, sy + 16, 4 + age / 30, 0, 7); ctx.stroke(); return true; }
       case 'slash': { if (age > 220) return false; ctx.strokeStyle = '#fff'; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.arc(sx + 16, sy + 16, 11, -2.4 + age / 120, -0.6 + age / 120); ctx.stroke(); return true; }
       case 'proj': {
-        const dur = 260; if (age > dur) return false; const k = age / dur, px = (f.x + (f.tx - f.x) * k) * TS + ox + 16, py = (f.y + (f.ty - f.y) * k) * TS + oy + 10;
+        const dur = f.fx === 'lightning' ? 185 : 300; if (age > dur) return false; const k = age / dur, px = (f.x + (f.tx - f.x) * k) * TS + ox + 16, py = (f.y + (f.ty - f.y) * k) * TS + oy + 10;
         const c = FXC[f.fx] || '#fff', prev = Math.max(0, k - .24), lx = (f.x + (f.tx - f.x) * prev) * TS + ox + 16, ly = (f.y + (f.ty - f.y) * prev) * TS + oy + 10;
-        ctx.strokeStyle = c; ctx.globalAlpha = .55 * (1 - k); ctx.lineWidth = 2.4; ctx.beginPath(); ctx.moveTo(lx, ly); ctx.lineTo(px, py); ctx.stroke();
-        ctx.globalAlpha = 1; ctx.fillStyle = c; ctx.shadowColor = c; ctx.shadowBlur = 13 * K; ctx.beginPath(); ctx.arc(px, py, f.fx === 'arcane' ? 3.5 : 5.5, 0, 7); ctx.fill(); ctx.shadowBlur = 0; ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(px, py, 1.5, 0, 7); ctx.fill(); return true;
+        ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.strokeStyle = c; ctx.shadowColor = c; ctx.shadowBlur = 13 * K;
+        if (f.fx === 'lightning') {
+          ctx.globalAlpha = .95; ctx.lineWidth = 2.1; ctx.beginPath(); ctx.moveTo(lx, ly);
+          for (let i = 1; i < 5; i++) { const q = i / 5, j = Math.sin((age + i * 37) * .11) * 4; ctx.lineTo(lx + (px - lx) * q + j, ly + (py - ly) * q + (i % 2 ? -j : j) * .35); }
+          ctx.lineTo(px, py); ctx.stroke();
+        } else {
+          ctx.globalAlpha = .58 * (1 - k); ctx.lineWidth = f.fx === 'water' ? 3.4 : 2.7; ctx.beginPath(); ctx.moveTo(lx, ly); ctx.lineTo(px, py); ctx.stroke();
+          for (let i = 0; i < 4; i++) { const q = Math.max(0, k - i * .055), x = (f.x + (f.tx - f.x) * q) * TS + ox + 16, y = (f.y + (f.ty - f.y) * q) * TS + oy + 10 + Math.sin(age * .045 + i * 2) * 2; ctx.globalAlpha = .5 - i * .09; ctx.fillStyle = c; ctx.beginPath(); ctx.arc(x, y, f.fx === 'fire' ? 2.8 - i * .35 : 1.8, 0, 7); ctx.fill(); }
+        }
+        ctx.globalAlpha = 1; ctx.fillStyle = c; ctx.beginPath(); ctx.arc(px, py, f.fx === 'fire' ? 5.8 : f.fx === 'water' ? 5 : f.fx === 'lightning' ? 3.2 : 4.2, 0, 7); ctx.fill();
+        if (f.fx === 'water') { ctx.strokeStyle = '#d8ffff'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.arc(px, py, 3 + Math.sin(age * .04), .3, 5.7); ctx.stroke(); }
+        else { ctx.shadowBlur = 0; ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(px, py, 1.35, 0, 7); ctx.fill(); }
+        if (k > .78) { ctx.globalAlpha = (k - .78) / .22 * .65; ctx.strokeStyle = c; ctx.lineWidth = 1.8; ctx.beginPath(); ctx.arc((f.tx * TS + ox + 16), (f.ty * TS + oy + 16), 5 + (k - .78) * 34, 0, 7); ctx.stroke(); }
+        ctx.restore(); return true;
       }
       case 'area': {
         if (age > 550) return false; const a = 1 - age / 550;
         if (f.fx === 'strike') { ctx.strokeStyle = `rgba(255,60,60,${a})`; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(sx + 6, sy + 6); ctx.lineTo(sx + 26, sy + 26); ctx.moveTo(sx + 26, sy + 6); ctx.lineTo(sx + 6, sy + 26); ctx.stroke(); return true; }
         if (f.fx === 'berserk') { ctx.strokeStyle = `rgba(255,90,20,${a})`; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(sx + 16, sy + 16, 8 + age / 15, 0, 7); ctx.stroke(); return true; }
+        if (f.fx === 'earth') {
+          ctx.save(); ctx.globalAlpha = a; ctx.strokeStyle = '#5d3922'; ctx.lineWidth = 1.7; ctx.beginPath();
+          for (let i = 0; i < 6; i++) { const ang = i * 1.047 + .25, len = 5 + age / 42; ctx.moveTo(sx + 16, sy + 18); ctx.lineTo(sx + 16 + Math.cos(ang) * len, sy + 18 + Math.sin(ang) * len * .5); }
+          ctx.stroke(); ctx.fillStyle = '#d6a460';
+          for (let i = 0; i < 5; i++) { const ang = i * 1.33 + .4, r = 4 + age / 35; ctx.fillRect(sx + 15 + Math.cos(ang) * r, sy + 17 + Math.sin(ang) * r * .45 - age / 70, 3, 3); }
+          ctx.restore(); return true;
+        }
+        if (f.fx === 'lightning') {
+          ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = a; ctx.strokeStyle = '#fff58a'; ctx.shadowColor = '#d58aff'; ctx.shadowBlur = 10 * K; ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.moveTo(sx + 16 + Math.sin(f.x * 7 + f.y) * 7, sy - 8);
+          for (let i = 0; i < 4; i++) { const y = sy + i * 8, x = sx + 16 + Math.sin(i * 9 + f.x * 3 + age * .13) * 7; ctx.lineTo(x, y); }
+          ctx.stroke(); ctx.fillStyle = '#dca6ff'; ctx.globalAlpha = a * .28; ctx.beginPath(); ctx.arc(sx + 16, sy + 17, 5 + age / 35, 0, 7); ctx.fill(); ctx.restore(); return true;
+        }
         const col = f.fx === 'energy' ? [200, 120, 255] : f.fx === 'whirl' ? [220, 220, 230] : [255, 140, 40];
         const g = ctx.createRadialGradient(sx + 16, sy + 16, 2, sx + 16, sy + 16, 20); g.addColorStop(0, `rgba(${col},${a * 0.7})`); g.addColorStop(1, `rgba(${col},0)`);
         ctx.fillStyle = g; ctx.fillRect(sx - 4, sy - 4, TS + 8, TS + 8);
@@ -602,7 +755,7 @@
         for (let i = 0; i < 4; i++) ctx.fillRect(sx + SPR.hash(i, f.x, f.y + (age / 90 | 0)) * 28, sy + SPR.hash(f.x, i, f.y + (age / 90 | 0)) * 28, 2, 2);
         return true;
       }
-      case 'heal': { if (age > 800) return false; ctx.fillStyle = `rgba(140,220,255,${1 - age / 800})`; for (let i = 0; i < 7; i++) { ctx.beginPath(); ctx.arc(sx + 4 + SPR.hash(i, 3, f.x) * 24, sy + 22 - age / 25 - SPR.hash(i, 5, f.y) * 14, 1.6, 0, 7); ctx.fill(); } return true; }
+      case 'heal': { if (age > 800) return false; const a = 1 - age / 800; ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.fillStyle = `rgba(120,225,255,${a})`; ctx.strokeStyle = `rgba(205,255,255,${a})`; for (let i = 0; i < 7; i++) { ctx.beginPath(); ctx.arc(sx + 4 + SPR.hash(i, 3, f.x) * 24, sy + 22 - age / 25 - SPR.hash(i, 5, f.y) * 14, 1.6, 0, 7); ctx.fill(); } ctx.lineWidth = 1.4; ctx.beginPath(); ctx.ellipse(sx + 16, sy + 20, 6 + age / 60, 2 + age / 180, 0, 0, 7); ctx.stroke(); ctx.restore(); return true; }
       case 'level': { if (age > 1800) return false; const a = 1 - age / 1800; ctx.fillStyle = `rgba(255,220,60,${a})`; for (let i = 0; i < 14; i++) { const ang = i / 14 * 6.28 + age / 300, rr = 10 + age / 40; ctx.beginPath(); ctx.arc(sx + 16 + Math.cos(ang) * rr, sy + 16 + Math.sin(ang) * rr * 0.6, 1.8, 0, 7); ctx.fill(); } ctx.globalAlpha = a; ctx.font = `800 ${16 * UI}px Lora, serif`; txt('LEVEL UP!', sx + 16, sy - 24 - age / 60, '#ffd84a'); ctx.globalAlpha = 1; return true; }
       case 'blood': return age < 1500;
       case 'corpse': return age < 12000;
@@ -920,7 +1073,14 @@
   //  • o canto inferior esquerdo inteiro serve para andar (não precisa acertar o círculo);
   //  • o visual do joystick continua o mesmo.
   const joy = $('joy'), knob = $('knob'); let joyId = null, joyDir = -1, joyAX = 0, joyAY = 0;
-  function setWalk(d) { if (loadingOn) d = -1; if (d !== joyDir) { joyDir = d; send({ t: 'walk', d }); } }
+  function setWalk(d) {
+    if (loadingOn) d = -1;
+    if (d === joyDir) return;
+    joyDir = d;
+    // ao soltar, manda onde o personagem parou na tela: o servidor completa os passos que faltam
+    if (d < 0 && pred) send({ t: 'walk', d, x: pred.x, y: pred.y }); else send({ t: 'walk', d });
+    if (d >= 0 && pred) predict(performance.now());   // responde no mesmo instante do toque
+  }
   setInterval(() => { if (joyDir >= 0 && inGame) send({ t: 'walk', d: joyDir }); }, 250);
   function joyRect() { const r = joy.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2, r: r.width / 2 }; }
   function inZone(x, y) {
